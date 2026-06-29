@@ -1,0 +1,6 @@
+cookies.json
+.env.config
+node_modules/
+state.json
+logs/
+screenshots/

@@ -1,0 +1,14 @@
+{
+  "name": "ig-feed-watcher",
+  "version": "1.0.0",
+  "description": "Headless Instagram feed watcher with custom script hooks and Telegram alerts",
+  "main": "watcher.js",
+  "type": "module",
+  "scripts": {
+    "watch": "node watcher.js",
+    "login": "node login.js"
+  },
+  "dependencies": {
+    "puppeteer": "^21.11.0"
+  }
+}

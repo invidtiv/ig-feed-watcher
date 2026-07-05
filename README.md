@@ -5,7 +5,89 @@ Headless Instagram feed watcher that detects new posts on your feed and:
 - 🔔 Sends you a Telegram notification (photo + caption)
 - 🔧 Runs a custom hook script with the post data as JSON
 
-## Setup
+Also includes a **Post API** — an HTTP API to post images to Instagram using the same session cookies.
+
+## Posting API
+
+A lightweight Express server that accepts an image + caption and posts to Instagram via Puppeteer automation.
+
+### Start the API server
+
+```bash
+cd /home/bsdev/ig-feed-watcher
+node post-server.js
+```
+
+The server listens on `127.0.0.1:4030` (Tailnet/internal only — no public exposure).
+
+### Endpoints
+
+#### `GET /health`
+Health check. Returns service status and whether cookies are configured.
+
+```json
+{"status":"ok","service":"ig-feed-watcher-post-api","uptime":5.0,"cookiesConfigured":true}
+```
+
+#### `GET /status`
+Session/cookie status. Returns cookie count and whether `sessionid` is present.
+
+```json
+{"status":"ok","cookiesFile":"...","cookieCount":3,"hasSessionId":true,"message":"Session cookies present (validity not checked)"}
+```
+
+#### `POST /post`
+Posts an image to Instagram. Two modes:
+
+**Mode 1 — Multipart file upload:**
+```bash
+curl -X POST http://127.0.0.1:4030/post \
+  -F "image=@/path/to/image.jpg" \
+  -F "caption=Your caption here 📸"
+```
+
+**Mode 2 — JSON with existing file path:**
+```bash
+curl -X POST http://127.0.0.1:4030/post \
+  -H "Content-Type: application/json" \
+  -d '{"imagePath": "/path/to/image.jpg", "caption": "Your caption"}'
+```
+
+**Response (success):**
+```json
+{"success":true,"permalink":"https://www.instagram.com/p/XXXXX/","postedAt":"2026-06-30T21:45:27.911Z"}
+```
+
+**Response (failure):**
+```json
+{"success":false,"error":"Error message..."}
+```
+
+### How posting works
+
+The poster (`poster.js`) automates the Instagram web create-post flow:
+1. Launches headless Chromium with session cookies
+2. Clicks "New post" → "Post" in the nav dropdown
+3. Uploads the image file
+4. Clicks "Next" through crop → filter pages
+5. Enters the caption in the caption textfield
+6. Clicks "Share"
+7. Waits for confirmation and extracts the permalink
+
+### CLI posting
+
+You can also post directly without the API server:
+
+```bash
+node poster.js /path/to/image.jpg "Your caption here"
+```
+
+### Configuration
+
+The API server reads cookies from the same `cookies.json` used by the watcher.
+Port can be changed via `IG_POST_API_PORT` env var.
+
+## Feed Watcher Setup
 
 ### 1. Install dependencies
 ```bash
@@ -102,6 +184,8 @@ Example hooks (already in the script, commented out):
 ```
 ig-feed-watcher/
 ├── watcher.js          — main watcher script (Puppeteer + headless Chrome)
+├── poster.js           — Instagram posting automation (Puppeteer)
+├── post-server.js      — HTTP API server (Express + Multer)
 ├── login.js            — interactive login helper (needs display)
 ├── export-cookies.py   — extract cookies from local Chrome profile
 ├── cookies.json        — your Instagram session cookies (you create this)
@@ -109,7 +193,8 @@ ig-feed-watcher/
 ├── hooks/
 │   └── on-new-post.sh  — custom hook script (edit this!)
 ├── screenshots/        — post screenshots
-├── logs/               — watcher logs
+├── uploads/            — uploaded images (for posting API)
+├── logs/               — watcher + poster logs
 ├── .env.config         — configuration
 └── package.json
 ```

@@ -1,0 +1,75 @@
+{
+  "groups": [
+    {
+      "id": "g_mr7u3k93",
+      "name": "Florest",
+      "color": "#26f50a",
+      "accounts": [
+        "mda_sc",
+        "mda_brasil",
+        "mdagovbr",
+        "editaisdecultura",
+        "ministerio.agricultura",
+        "agriculturafamiliar",
+        "govbr",
+        "planalto",
+        "agricultura.gov",
+        "incra_oficial",
+        "embrapa",
+        "conab_agricola",
+        "senar_brasil",
+        "embrapa_oficial"
+      ],
+      "keywords": [
+        "Ministério do Desenvolvimento Agrário",
+        "Agricultura Familiar",
+        "desenvolvimento agrário",
+        "agricultura familiar",
+        "reforma agrária",
+        "assentamento",
+        "INCRA",
+        "pronaf",
+        "segurança alimentar",
+        "soberania alimentar",
+        "agroecologia",
+        "cooperativismo agrícola",
+        "agricultura camponesa",
+        "povo do campo",
+        "reforma do campo",
+        "desenvolvimento rural",
+        "tecnologia social",
+        "política agrícola",
+        "crédito rural",
+        "assistência técnica",
+        "cooperativa agrícola",
+        "produção orgânica",
+        "agricultura orgânica",
+        "Amazonia"
+      ],
+      "hashtags": [
+        "#agriculturafamiliar",
+        "#reformaagraria",
+        "#agroecologia",
+        "#soberaniaalimentar",
+        "#pronaf",
+        "#incra",
+        "#desenvolvimentorural",
+        "#agriculturacamponesa",
+        "#mda",
+        "#ministeriodaagricultura",
+        "#agriculturaorganica",
+        "#cooperativismo"
+      ],
+      "telegramThreadId": 1800
+    },
+    {
+      "id": "g_mr7vgtplnbve",
+      "name": "Photos",
+      "color": "#ff9ed7",
+      "accounts": [],
+      "keywords": [],
+      "hashtags": [],
+      "telegramThreadId": 1842
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+[Unit]
+Description=IG Feed Watcher — Web Explorer
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/bsdev/ig-feed-watcher
+ExecStart=/home/bsdev/.nvm/versions/node/v22.22.0/bin/node server.js
+Restart=unless-stopped
+RestartSec=5
+Environment=PORT=4180
+User=bsdev
+
+[Install]
+WantedBy=multi-user.target

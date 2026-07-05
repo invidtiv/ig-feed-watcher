@@ -1,0 +1,18 @@
+services:
+  ig-explorer:
+    build: .
+    container_name: ig-explorer
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4180:4180"
+    volumes:
+      # Mount the DB and screenshots so they stay in sync with the watcher
+      - ./posts.db:/app/posts.db
+      - ./screenshots:/app/screenshots
+      - ./priority-list.json:/app/priority-list.json:ro
+    networks:
+      - nginx-proxy-manager_npm-network
+
+networks:
+  nginx-proxy-manager_npm-network:
+    external: true

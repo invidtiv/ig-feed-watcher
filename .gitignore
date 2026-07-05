@@ -4,3 +4,5 @@ node_modules/
 state.json
 logs/
 screenshots/
+posts.db
+uploads/

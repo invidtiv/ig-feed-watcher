@@ -1,0 +1,14 @@
+node_modules
+screenshots/_debug_*
+logs
+.git
+*.log
+state.json
+cookies.json
+.env.config
+create-topic.*
+setup-topic.*
+check-chat.*
+export-cookies.py
+login.js
+README.md

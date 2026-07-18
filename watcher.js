@@ -48,7 +48,35 @@ const CONFIG = {
   scrapeComments: true,
   maxCommentsPerPost: 50,
   commentLoadMoreClicks: 3,
+  detailScrapeDelayMs: 3000,        // minimum delay between post-detail requests
+  detailScrapeForMatchedOnly: true, // only open detail pages for matched posts (or likely-truncated captions)
+  rateLimitCooldownMs: 30 * 60 * 1000, // pause detail scraping for 30 min after a 429/error page
 };
+
+let lastDetailRequestAt = 0;
+let rateLimitHit = false;
+let rateLimitUntil = 0;
+
+function isErrorPageText(text) {
+  if (!text) return false;
+  return /HTTP ERROR 429|This page isn’t working|rate limit|Try Again Later|Restricted|Sorry, this page isn't available|Error/i.test(text);
+}
+
+function captionMayBeTruncated(caption) {
+  if (!caption) return false;
+  return caption.length >= 500 || /…|\.{3,}|more\s*$/i.test(caption);
+}
+
+async function throttleDetailRequest() {
+  const delay = CONFIG.detailScrapeDelayMs || 0;
+  if (delay <= 0) return;
+  const now = Date.now();
+  const wait = Math.max(0, lastDetailRequestAt + delay - now);
+  if (wait > 0) {
+    await new Promise(r => setTimeout(r, wait));
+  }
+  lastDetailRequestAt = Date.now();
+}
 
 // ─── Database ─────────────────────────────────────────────────────────────────
 
@@ -422,12 +450,12 @@ function log(msg) {
 
 function loadState() {
   if (!existsSync(CONFIG.stateFile)) {
-    return { seenPosts: [], lastRun: null, lastPostTime: null };
+    return { seenPosts: [], lastRun: null, lastPostTime: null, rateLimitUntil: null };
   }
   try {
     return JSON.parse(readFileSync(CONFIG.stateFile, 'utf-8'));
   } catch {
-    return { seenPosts: [], lastRun: null, lastPostTime: null };
+    return { seenPosts: [], lastRun: null, lastPostTime: null, rateLimitUntil: null };
   }
 }
 
@@ -810,10 +838,52 @@ async function scrapeFeed(page) {
 
 // ─── Post Processing ──────────────────────────────────────────────────────────
 
-async function capturePostScreenshot(page, post) {
+async function capturePostScreenshot(browser, page, post) {
   const screenshotPath = join(CONFIG.screenshotsDir, `${post.shortcode}.jpg`);
 
-  // Find the article with this post's link and screenshot it
+  // Prefer the actual post image(s) over a screenshot of the feed article.
+  // Filter out small profile-picture thumbnails and emojis, then pick the first usable image.
+  const imageUrls = (post.imageUrls || []).filter(url => !/s150x150|p150x150|emoji|\.svg/i.test(url));
+  const imageUrl = imageUrls[0] || (post.imageUrls || [])[0];
+
+  if (imageUrl && browser) {
+    let imagePage = null;
+    try {
+      imagePage = await browser.newPage();
+      await imagePage.setUserAgent(CONFIG.userAgent);
+      await imagePage.setViewport({ width: 1920, height: 1080 });
+      await imagePage.goto(imageUrl, { waitUntil: CONFIG.navWaitUntil, timeout: CONFIG.pageTimeout });
+      await imagePage.waitForTimeout(1500);
+
+      const img = await imagePage.$('img');
+      if (img) {
+        const box = await img.boundingBox();
+        if (box && box.width >= 200 && box.height >= 200) {
+          await imagePage.setViewport({
+            width: Math.ceil(box.width),
+            height: Math.ceil(box.height),
+          });
+          await imagePage.screenshot({
+            path: screenshotPath,
+            type: 'jpeg',
+            quality: 85,
+            clip: { x: 0, y: 0, width: Math.ceil(box.width), height: Math.ceil(box.height) },
+          });
+          log(`Saved actual post image for ${post.shortcode}: ${Math.round(box.width)}x${Math.round(box.height)}`);
+          await imagePage.close();
+          return screenshotPath;
+        }
+      }
+    } catch (err) {
+      log(`Could not save actual image for ${post.shortcode}: ${err.message}`);
+    } finally {
+      if (imagePage) {
+        try { await imagePage.close(); } catch {}
+      }
+    }
+  }
+
+  // Fallback: screenshot the feed article as before.
   const articleHandle = await page.evaluateHandle((shortcode) => {
     const articles = document.querySelectorAll('article');
     for (const article of articles) {
@@ -833,7 +903,6 @@ async function capturePostScreenshot(page, post) {
     } catch {}
   }
 
-  // Fallback: full page screenshot
   if (!existsSync(screenshotPath)) {
     await page.screenshot({
       path: screenshotPath,
@@ -900,6 +969,17 @@ async function scrapePostDetail(browser, post) {
     });
     await commentPage.waitForTimeout(4000);
     await dismissPopups(commentPage);
+
+    // Check for Instagram rate-limit / error pages before trusting the content
+    const pageCheck = await commentPage.evaluate(() => {
+      const text = document.body ? document.body.innerText : '';
+      const title = document.title || '';
+      return { text, title };
+    });
+    if (isErrorPageText(pageCheck.text) || /error|429|rate limit|try again/i.test(pageCheck.title)) {
+      log(`Rate-limit/error page detected for ${post.shortcode}`);
+      return { caption: '', comments: [], rateLimited: true };
+    }
 
     // Extract full caption from the post page (not truncated like in the feed)
     const fullCaption = await commentPage.evaluate((author) => {
@@ -1062,10 +1142,11 @@ async function scrapePostDetail(browser, post) {
     }, CONFIG.maxCommentsPerPost);
 
     log(`Scraped ${comments.length} comment(s) for ${post.shortcode}`);
-    return { caption: fullCaption || '', comments: CONFIG.scrapeComments ? comments : [] };
+    return { caption: fullCaption || '', comments: CONFIG.scrapeComments ? comments : [], rateLimited: false };
   } catch (err) {
     log(`Post detail scraping failed for ${post.shortcode}: ${err.message}`);
-    return { caption: '', comments: [] };
+    const rateLimited = /429|rate.?limit|too many requests|blocked/i.test(err.message);
+    return { caption: '', comments: [], rateLimited };
   } finally {
     if (commentPage) {
       try { await commentPage.close(); } catch {}
@@ -1076,20 +1157,40 @@ async function scrapePostDetail(browser, post) {
 async function processNewPost(browser, page, post, groups) {
   log(`Processing new post: ${post.shortcode} by @${post.author}`);
 
-  // 1. Screenshot
-  const screenshotPath = await capturePostScreenshot(page, post);
+  // 1. Save the actual post image (falls back to a screenshot of the feed article)
+  const screenshotPath = await capturePostScreenshot(browser, page, post);
   if (screenshotPath) log(`Screenshot saved: ${screenshotPath}`);
 
-  // 2. Scrape full caption + comments from the post page (opens post in a separate tab)
-  const detail = await scrapePostDetail(browser, post);
-  const comments = detail.comments;
-  if (detail.caption && detail.caption.length > (post.caption || '').length) {
-    post.caption = detail.caption;
+  // 2. Match groups with the feed caption first
+  let matched = matchGroups(post, groups || []);
+  let isMatched = matched.length > 0;
+
+  // Only open detail pages for matched posts (or posts with a likely-truncated caption)
+  // to avoid Instagram rate-limiting us when we open many post pages in a single run.
+  const shouldDetail = !rateLimitHit &&
+    (isMatched || captionMayBeTruncated(post.caption) || !CONFIG.detailScrapeForMatchedOnly);
+
+  let detail = { caption: '', comments: [], rateLimited: false };
+  if (shouldDetail) {
+    await throttleDetailRequest();
+    detail = await scrapePostDetail(browser, post);
+    if (detail.rateLimited) {
+      rateLimitHit = true;
+      rateLimitUntil = Date.now() + CONFIG.rateLimitCooldownMs;
+      log(`Rate limit detected; detail scraping paused for ${CONFIG.rateLimitCooldownMs / 60000} minutes`);
+    }
+    if (detail.caption && !isErrorPageText(detail.caption) && detail.caption.length > (post.caption || '').length) {
+      post.caption = detail.caption;
+      // Re-check groups with the full caption in case a keyword appears later in the text
+      const rematched = matchGroups(post, groups || []);
+      if (rematched.length > 0) {
+        matched = rematched;
+        isMatched = true;
+      }
+    }
   }
 
-  // 3. Match groups AFTER full caption is available (keywords may only appear in full text)
-  const matched = matchGroups(post, groups || []);
-  const isMatched = matched.length > 0;
+  const comments = detail.comments;
   if (isMatched) {
     log(`Groups matched: ${matched.map(g => g.name).join(', ')}`);
   }
@@ -1113,10 +1214,9 @@ async function processNewPost(browser, page, post, groups) {
   await runHookScript(hookPostData);
 
   // 6. Telegram notification — send to each matched group's own topic
+  // Keep the message clean: screenshot + metadata only, no caption preview
+  // (captions/comments are still stored in the DB and shown in the web explorer).
   const typeLabel = post.isReel ? '🎬 Reel' : '📸 Post';
-  const captionPreview = post.caption
-    ? `\n💬 "${post.caption.slice(0, 200)}${post.caption.length > 200 ? '...' : ''}"`
-    : '';
   const timeLabel = post.timestamp
     ? `\n🕐 ${new Date(post.timestamp).toLocaleString()}`
     : '';
@@ -1132,7 +1232,7 @@ async function processNewPost(browser, page, post, groups) {
         `🚨 <b>${g.name}</b>\n` +
         `👤 <b>@${post.author}</b>\n` +
         `${typeLabel} — <a href="${post.permalink}">Open</a>` +
-        `${groupLabel}${captionPreview}${commentsLabel}${timeLabel}`;
+        `${groupLabel}${commentsLabel}${timeLabel}`;
       await sendTelegram(msg, screenshotPath, g.telegramThreadId || null);
     }
   } else {
@@ -1141,7 +1241,7 @@ async function processNewPost(browser, page, post, groups) {
       `🚨 <b>New IG Feed Post</b>\n` +
       `👤 <b>@${post.author}</b>\n` +
       `${typeLabel} — <a href="${post.permalink}">Open</a>` +
-      `${captionPreview}${commentsLabel}${timeLabel}`;
+      `${commentsLabel}${timeLabel}`;
     await sendTelegram(msg, screenshotPath, null);
   }
 }
@@ -1164,6 +1264,13 @@ async function main() {
 
   // Load state (legacy flat file — still used for fast seen-check)
   const state = loadState();
+  if (state.rateLimitUntil) {
+    rateLimitUntil = state.rateLimitUntil;
+    if (Date.now() < rateLimitUntil) {
+      rateLimitHit = true;
+      log(`Rate limit cooldown active until ${new Date(rateLimitUntil).toISOString()}; detail scraping skipped for this run`);
+    }
+  }
   const seenSet = new Set(state.seenPosts.map(p => p.shortcode || p));
   // Also load shortcodes from DB into the seen set
   if (db) {
@@ -1244,6 +1351,7 @@ async function main() {
       state.lastPostTime = posts[0].timestamp;
     }
 
+    state.rateLimitUntil = rateLimitUntil;
     saveState(state);
     log(`Run complete. ${postsToProcess.length} new post(s) processed. Total seen: ${state.seenPosts.length}`);
 

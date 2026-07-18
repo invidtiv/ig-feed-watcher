@@ -18,7 +18,8 @@
         "embrapa",
         "conab_agricola",
         "senar_brasil",
-        "embrapa_oficial"
+        "embrapa_oficial",
+        "@ecouniversidade"
       ],
       "keywords": [
         "Ministério do Desenvolvimento Agrário",
@@ -58,7 +59,12 @@
         "#mda",
         "#ministeriodaagricultura",
         "#agriculturaorganica",
-        "#cooperativismo"
+        "#cooperativismo",
+        "#MovimentoFuturoLocal",
+        "#MesMundialDaLocalizacao",
+        "#EconomiaLocal",
+        "#SistemasAlimentares",
+        "#Território"
       ],
       "telegramThreadId": 1800
     },
@@ -66,7 +72,31 @@
       "id": "g_mr7vgtplnbve",
       "name": "Photos",
       "color": "#ff9ed7",
-      "accounts": [],
+      "accounts": [
+        "becky_merbler",
+        "c_p_snapshot",
+        "cecilbphotography",
+        "ceciliagioria.photography",
+        "christianriki77",
+        "darklingsummer",
+        "frankpetersphotography",
+        "izzet_keribar_photography",
+        "llumart25",
+        "mamunurpics",
+        "mariuslag_",
+        "maziyarpanahi",
+        "michalaphil",
+        "photo_grapher.68",
+        "photofigueirido",
+        "photographybytaniag",
+        "pixelux_lens",
+        "sandra_zoom",
+        "street_ashh",
+        "the___shutter___bug",
+        "thomas_yuri_dandrea",
+        "virginia_cavallaro",
+        "vitorseromenho"
+      ],
       "keywords": [],
       "hashtags": [],
       "telegramThreadId": 1842

@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Watcher Run — every 5 minutes",
+    "viewBox": [760, 740],
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "main-run", "label": "Main run", "focus": ["cron", "launch", "loadig", "scrape", "filter", "match", "detail", "save", "hook", "tg", "state"], "note": "One complete cron-triggered run, end to end." },
+      { "id": "detection", "label": "Detection + group routing", "focus": ["scrape", "filter", "match", "detail", "ratelimit"], "note": "New posts are filtered, matched to groups, and enriched when safe." },
+      { "id": "fanout", "label": "Notification fan-out", "focus": ["match", "save", "hook", "tg", "state"], "note": "Every new post is stored, hooked, and announced." }
+    ]
+  },
+  "lanes": [
+    { "id": "scheduler", "label": "Scheduler" },
+    { "id": "browser", "label": "Headless Chromium" },
+    { "id": "storage", "label": "Storage" },
+    { "id": "watcher", "label": "watcher.js" },
+    { "id": "alerting", "label": "Alerting" }
+  ],
+  "phases": [
+    { "id": "connect", "label": "Trigger + connect", "fromCol": 0, "toCol": 1 },
+    { "id": "detect", "label": "Scrape + detect", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "enrich", "label": "Enrich + alert", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "groups": [
+    { "id": "fanout_group", "label": "Per new post", "lane": "alerting", "fromCol": 4, "toCol": 5, "variant": "emphasis" },
+    { "id": "rl_guard", "label": "Rate-limit guard", "lane": "browser", "fromCol": 4, "toCol": 5, "variant": "security" }
+  ],
+  "mainPath": ["cron", "launch", "loadig", "scrape", "filter", "match", "detail", "save", "hook", "tg", "state"],
+  "nodes": [
+    { "id": "cron", "lane": "scheduler", "col": 0, "type": "external", "label": "Cron fires", "sublabel": "*/5 * * * *" },
+    { "id": "launch", "lane": "browser", "col": 0, "type": "backend", "label": "Open browser", "sublabel": "stealth flags" },
+    { "id": "loadig", "lane": "browser", "col": 1, "width": 72, "type": "backend", "label": "Load IG", "sublabel": "cookies · retry" },
+    { "id": "scrape", "lane": "browser", "col": 2, "width": 72, "type": "backend", "label": "Scrape", "sublabel": "scroll ×3" },
+    { "id": "detail", "lane": "browser", "col": 4, "type": "backend", "label": "Detail page", "sublabel": "caption · comments" },
+    { "id": "ratelimit", "lane": "browser", "col": 5, "type": "security", "label": "Rate limit", "sublabel": "30 min pause" },
+    { "id": "save", "lane": "storage", "col": 4, "type": "database", "label": "Save to DB", "sublabel": "post + comments" },
+    { "id": "state", "lane": "storage", "col": 5, "type": "database", "label": "Save state", "sublabel": "seen · cooldown" },
+    { "id": "filter", "lane": "watcher", "col": 2, "type": "backend", "label": "New posts", "sublabel": "seen set · cap 10" },
+    { "id": "match", "lane": "watcher", "col": 3, "type": "backend", "label": "Match groups", "sublabel": "account · keyword" },
+    { "id": "hook", "lane": "alerting", "col": 4, "type": "backend", "label": "Run hook", "sublabel": "JSON on stdin" },
+    { "id": "tg", "lane": "alerting", "col": 5, "type": "external", "label": "Telegram", "sublabel": "topic per group", "brand": "telegram" }
+  ],
+  "edges": [
+    { "from": "cron", "to": "launch", "label": "fire", "variant": "emphasis", "route": "drop", "fromSide": "bottom", "toSide": "top" },
+    { "from": "launch", "to": "loadig", "route": "bottom-channel", "fromSide": "bottom", "toSide": "bottom" },
+    { "from": "loadig", "to": "scrape", "route": "bottom-channel", "fromSide": "bottom", "toSide": "bottom" },
+    { "from": "scrape", "to": "filter", "label": "articles", "variant": "emphasis", "route": "drop", "fromSide": "bottom", "toSide": "top" },
+    { "from": "filter", "to": "match", "route": "bottom-channel", "fromSide": "bottom", "toSide": "bottom" },
+    { "from": "match", "to": "detail", "label": "new posts", "variant": "emphasis", "fromSide": "top", "toSide": "left", "via": [[430, 417], [430, 243]], "labelAt": [360, 300] },
+    { "from": "detail", "to": "save", "label": "INSERT", "route": "drop", "fromSide": "bottom", "toSide": "top", "labelAt": [515, 320] },
+    { "from": "save", "to": "hook", "label": "post JSON", "variant": "emphasis", "route": "drop", "fromSide": "bottom", "toSide": "top", "labelAt": [500, 528] },
+    { "from": "hook", "to": "tg", "route": "bottom-channel", "fromSide": "bottom", "toSide": "bottom" },
+    { "from": "tg", "to": "state", "label": "mark seen", "variant": "dashed", "route": "drop", "fromSide": "top", "toSide": "bottom", "labelAt": [560, 490] },
+    { "from": "detail", "to": "ratelimit", "label": "429 / error page", "variant": "security", "role": "error", "route": "bottom-channel", "fromSide": "bottom", "toSide": "bottom", "labelAt": [550, 285] },
+    { "from": "ratelimit", "to": "state", "label": "pause detail scraping", "variant": "dashed", "route": "drop", "fromSide": "bottom", "toSide": "top", "labelAt": [660, 320] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Bounded runs", "items": ["One run processes at most 10 new posts", "The seen set merges state.json with posts.db", "Every feed post is marked seen to prevent backlog"] },
+    { "dot": "violet", "title": "Group routing", "items": ["Groups match by account, keyword, and hashtag", "Matched posts are sent to their own Telegram topic", "The full caption is re-matched after detail scraping"] },
+    { "dot": "rose", "title": "Rate-limit guard", "items": ["Detail pages open only for matched or truncated posts", "A 3 s minimum delay sits between detail requests", "A 429 pauses detail scraping for 30 minutes"] }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "IG Feed Watcher — System Architecture",
+    "viewBox": [1000, 400],
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "watch-alert", "label": "Watch and alert loop", "focus": ["cron", "watcher", "browser", "instagram", "cookies", "tg", "hook", "db"], "note": "Every 5 minutes: scrape the feed, detect new posts, store them, and alert." },
+      { "id": "posting", "label": "Posting API", "focus": ["api", "poster", "browser", "cookies", "instagram"], "note": "An HTTP call drives a full create-post automation against Instagram." },
+      { "id": "explorer", "label": "Web explorer", "focus": ["explorer", "db"], "note": "A Docker-hosted dashboard reads the same SQLite store." }
+    ]
+  },
+  "components": [
+    { "id": "cron", "type": "external", "label": "Cron scheduler", "sublabel": "*/5 * * * *", "pos": [40, 32], "size": [140, 52] },
+    { "id": "watcher", "type": "backend", "label": "watcher.js", "sublabel": "Puppeteer feed watcher", "pos": [280, 32], "size": [150, 52], "tag": "every 5 min" },
+    { "id": "browser", "type": "backend", "label": "Headless Chromium", "sublabel": "stealth UA · popup dismissal", "pos": [520, 32], "size": [150, 52] },
+    { "id": "instagram", "type": "external", "label": "Instagram", "sublabel": "feed · post pages · create-post", "pos": [760, 32], "size": [150, 52], "brand": "instagram" },
+    { "id": "cookies", "type": "security", "label": "cookies.json", "sublabel": "sessionid · ds_user_id · csrftoken", "pos": [40, 148], "size": [150, 52] },
+    { "id": "db", "type": "database", "label": "posts.db", "sublabel": "SQLite · posts + comments", "pos": [280, 148], "size": [140, 52] },
+    { "id": "api", "type": "backend", "label": "post-server.js", "sublabel": "Express :4030 · multer", "pos": [520, 148], "size": [140, 52] },
+    { "id": "tg", "type": "external", "label": "Telegram Bot API", "sublabel": "sendPhoto · forum topics", "pos": [760, 148], "size": [150, 52], "brand": "telegram" },
+    { "id": "hook", "type": "backend", "label": "hooks/on-new-post.sh", "sublabel": "post JSON on stdin", "pos": [280, 264], "size": [150, 52] },
+    { "id": "poster", "type": "backend", "label": "poster.js", "sublabel": "create-post automation", "pos": [520, 264], "size": [140, 52] },
+    { "id": "explorer", "type": "frontend", "label": "Web Explorer", "sublabel": "server.js · Docker :4180", "pos": [40, 264], "size": [150, 52] }
+  ],
+  "boundaries": [
+    { "kind": "security-group", "label": "session secrets", "wraps": ["cookies"] }
+  ],
+  "connections": [
+    { "id": "cron-trigger", "from": "cron", "to": "watcher", "label": "every 5 min", "variant": "emphasis" },
+    { "id": "watch-launch", "from": "watcher", "to": "browser", "label": "launch Puppeteer" },
+    { "id": "browse-ig", "from": "browser", "to": "instagram", "label": "feed scraping", "labelDy": -28 },
+    { "id": "read-session", "from": "watcher", "to": "cookies", "label": "read session", "variant": "security", "fromSide": "left", "toSide": "top", "via": [[230, 58], [230, 112], [115, 112]], "labelAt": [160, 97] },
+    { "id": "save-posts", "from": "watcher", "to": "db", "label": "save posts + comments", "fromSide": "right", "toSide": "right", "via": [[455, 58], [455, 174], [420, 174]], "labelAt": [385, 120] },
+    { "id": "run-hook", "from": "watcher", "to": "hook", "label": "post JSON on stdin", "variant": "dashed", "fromSide": "right", "toSide": "top", "via": [[470, 58], [470, 224], [355, 224]], "labelAt": [410, 212] },
+    { "id": "notify-tg", "from": "watcher", "to": "tg", "label": "sendPhoto + caption", "variant": "emphasis", "fromSide": "right", "toSide": "bottom", "via": [[490, 58], [490, 344], [835, 344]], "labelAt": [660, 329] },
+    { "id": "api-call", "from": "api", "to": "poster", "label": "postToInstagram()", "fromSide": "bottom", "toSide": "top", "route": "straight", "labelAt": [610, 232] },
+    { "id": "post-launch", "from": "poster", "to": "browser", "label": "launch Puppeteer", "fromSide": "right", "toSide": "bottom", "via": [[700, 290], [700, 112], [595, 112]], "labelAt": [630, 100] },
+    { "id": "explore-db", "from": "explorer", "to": "db", "label": "SQL · fuzzy_match", "fromSide": "top", "toSide": "bottom", "via": [[115, 240], [350, 240]], "labelAt": [230, 252] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Watch loop", "items": ["Cron fires watcher.js every 5 minutes", "Chromium scrapes the feed with cookies.json", "New posts are deduplicated via state.json + posts.db"] },
+    { "dot": "violet", "title": "Alert & publish", "items": ["Screenshot + metadata are sent as Telegram sendPhoto", "Group-matched posts land in their own forum topic", "hooks/on-new-post.sh receives the post as JSON on stdin"] },
+    { "dot": "emerald", "title": "Store & explore", "items": ["posts.db keeps 71k+ posts in SQLite", "The Web Explorer serves a filterable grid on :4180", "post-server.js drives poster.js, which automates the create-post UI"] }
+  ]
+}

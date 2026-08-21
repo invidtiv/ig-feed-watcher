@@ -4,12 +4,16 @@ services:
     container_name: ig-explorer
     restart: unless-stopped
     ports:
-      - "127.0.0.1:4180:4180"
+      # Bind all interfaces so the explorer is reachable via localhost,
+      # the LAN, and the Tailnet.
+      - "4180:4180"
     volumes:
       # Mount the DB and screenshots so they stay in sync with the watcher
       - ./posts.db:/app/posts.db
       - ./screenshots:/app/screenshots
       - ./priority-list.json:/app/priority-list.json:ro
+      - ./groups.json:/app/groups.json
+      - ./.env.config:/app/.env.config:ro
     networks:
       - nginx-proxy-manager_npm-network
 

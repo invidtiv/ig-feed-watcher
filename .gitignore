@@ -6,3 +6,7 @@ logs/
 screenshots/
 posts.db
 uploads/
+
+# DB backups (transient)
+posts.db.bak-*
+*.db.bak-*

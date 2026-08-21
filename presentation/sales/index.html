@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IG Feed Watcher — Never Miss a Post That Matters</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>📡</text></svg>">
+<style>
+  :root {
+    --bg: #0b0a12;
+    --bg2: #12101c;
+    --card: #171527;
+    --border: #2b2740;
+    --text: #f0eef6;
+    --dim: #9b96b3;
+    --accent: #7c6cf0;
+    --accent2: #f26bb0;
+    --accent3: #37d0c1;
+    --amber: #f5a623;
+    --green: #37d0a6;
+    --pink: #f26bb0;
+    --radius: 14px;
+    --grad: linear-gradient(100deg, #7c6cf0, #f26bb0);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+  }
+
+  #deck { position: relative; width: 100%; height: 100vh; }
+  .slide {
+    position: absolute; inset: 0;
+    display: none;
+    padding: 48px 60px 84px;
+    overflow-y: auto;
+    animation: fadein .35s ease;
+  }
+  .slide.active { display: block; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  .slide h1 { font-size: 34px; font-weight: 800; letter-spacing: -.02em; margin-bottom: 8px; line-height: 1.12; }
+  .grad { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .slide .sub { color: var(--dim); font-size: 16px; margin-bottom: 24px; max-width: 880px; line-height: 1.55; }
+  .slide h2 { font-size: 18px; margin: 22px 0 10px; }
+  .slide h2::before { content: "▍"; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; margin-right: 6px; }
+  .slide ul { list-style: none; }
+  .slide li { padding: 5px 0 5px 24px; position: relative; font-size: 15px; line-height: 1.6; color: var(--text); }
+  .slide li::before { content: "✦"; position: absolute; left: 4px; color: var(--accent); font-size: 11px; top: 9px; }
+  .slide li b { color: #fff; }
+  .slide li .dim { color: var(--dim); }
+
+  .kpi-row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .kpi {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px 20px; min-width: 140px;
+  }
+  .kpi .v { font-size: 30px; font-weight: 800; letter-spacing: -.02em; }
+  .kpi .v.ac { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .kpi .v.g { color: var(--green); }
+  .kpi .v.a { color: var(--amber); }
+  .kpi .v.p { color: var(--pink); }
+  .kpi .l { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim); margin-top: 3px; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 1000px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px 22px;
+  }
+  .card h3 { font-size: 17px; margin-bottom: 9px; display: flex; align-items: center; gap: 9px; }
+  .card h3 .ico { font-size: 22px; }
+  .card p, .card li { font-size: 14px; line-height: 1.62; color: var(--text); }
+  .card .tag {
+    display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .05em;
+    text-transform: uppercase; padding: 2px 9px; border-radius: 5px; margin-bottom: 8px;
+  }
+  .tag.blue { background: #7c6cf022; color: #a99bff; }
+  .tag.green { background: #37d0a622; color: #4fe0b4; }
+  .tag.amber { background: #f5a62322; color: #ffc35e; }
+  .tag.pink { background: #f26bb022; color: #ff8fc6; }
+  .tag.teal { background: #37d0c122; color: #5ce0d3; }
+
+  .flow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 16px 0 8px; }
+  .flow .step {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 16px; font-size: 14.5px; font-weight: 700;
+  }
+  .flow .step.hl { border-color: transparent; background: var(--grad); color: #fff; box-shadow: 0 6px 24px rgba(124,108,240,.35); }
+  .flow .arr { color: var(--dim); font-size: 17px; }
+
+  .diagram-shell {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 6px; margin: 8px 0 10px;
+  }
+  .diagram-shell iframe {
+    width: 100%; height: 60vh; border: none; border-radius: 8px; background: #fff;
+    display: block;
+  }
+  .diagram-shell .cap {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 9px 10px 5px; font-size: 13px; color: var(--dim);
+  }
+  .diagram-shell .cap a { color: #a99bff; text-decoration: none; }
+  .diagram-shell .cap a:hover { text-decoration: underline; }
+
+  .cols2 { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(0,1fr); gap: 18px; align-items: start; }
+  @media (max-width: 1100px) { .cols2 { grid-template-columns: 1fr; } }
+
+  .note {
+    border-left: 3px solid var(--amber); background: #f5a62310;
+    padding: 11px 15px; border-radius: 0 9px 9px 0; font-size: 13.5px; margin: 12px 0; line-height: 1.6;
+  }
+
+  .big-num {
+    font-size: 64px; font-weight: 800; letter-spacing: -.03em; line-height: 1;
+    background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .big-num small { font-size: 22px; font-weight: 700; }
+
+  /* hero */
+  .hero { min-height: 78vh; display: flex; flex-direction: column; justify-content: center; }
+  .hero .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px; width: fit-content;
+    background: #7c6cf022; border: 1px solid #7c6cf055; color: #a99bff;
+    padding: 6px 14px; border-radius: 999px; font-size: 12.5px; font-weight: 700; letter-spacing: .04em;
+  }
+  .hero h1 { font-size: 62px; margin: 20px 0 10px; }
+  .hero .lede { font-size: 19px; color: var(--dim); max-width: 780px; line-height: 1.6; }
+
+  /* nav chrome */
+  #progress {
+    position: fixed; top: 0; left: 0; height: 3px; background: var(--grad);
+    width: 0; transition: width .25s ease; z-index: 30;
+  }
+  #counter {
+    position: fixed; bottom: 14px; right: 22px; font-size: 12px; color: var(--dim);
+    z-index: 30; font-variant-numeric: tabular-nums;
+  }
+  #dots { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; z-index: 30; }
+  #dots button {
+    width: 9px; height: 9px; border-radius: 50%; border: none; cursor: pointer;
+    background: #3a3650; padding: 0; transition: all .2s;
+  }
+  #dots button.active { background: var(--accent); width: 22px; border-radius: 5px; }
+  #hint { position: fixed; bottom: 14px; left: 22px; font-size: 12px; color: var(--dim); z-index: 30; }
+  kbd {
+    background: var(--card); border: 1px solid var(--border); border-bottom-width: 2px;
+    border-radius: 5px; padding: 1px 6px; font-family: inherit; font-size: 11px; color: var(--text);
+  }
+
+  .shot {
+    position: relative; display: block; overflow: hidden;
+    border-radius: 12px; border: 1px solid var(--border); background: #000;
+    text-decoration: none;
+  }
+  .shot img {
+    width: 100%; height: 300px; object-fit: cover; object-position: top;
+    display: block; cursor: zoom-in; transition: transform .3s ease;
+  }
+  .shot:hover img { transform: scale(1.04); }
+  .shot .cap {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    padding: 24px 12px 10px; font-size: 12.5px; color: #fff;
+    background: linear-gradient(transparent, rgba(0,0,0,.9));
+  }
+  .shot .cap .tag { margin-bottom: 2px; }
+  .shot .cap b { display: block; }
+
+  .pill { display:inline-block; padding: 3px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid var(--border); }
+  .pill.b1 { color:#ffc35e; border-color:#f5a62355; background:#f5a62314; }
+  .pill.b2 { color:#ff8fc6; border-color:#f26bb055; background:#f26bb014; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  tr:hover td { background: rgba(124,108,240,.06); }
+</style>
+</head>
+<body>
+<div id="progress"></div>
+<div id="deck">
+
+<!-- ═══════════════ 1 · HERO ═══════════════ -->
+<section class="slide">
+  <div class="hero">
+    <span class="eyebrow">📡 An always-on Instagram radar</span>
+    <h1>Never miss a post<br>that <span class="grad">matters</span> again.</h1>
+    <p class="lede">
+      IG Feed Watcher watches Instagram for you — day and night, every 5 minutes. It spots new posts
+      from the accounts, topics and hashtags you care about, delivers them straight to your Telegram,
+      and keeps a searchable archive of everything it has ever seen.
+    </p>
+    <div class="kpi-row" style="margin-top:34px">
+      <div class="kpi"><div class="v ac">Every 5 min</div><div class="l">it checks the feed — 24/7</div></div>
+      <div class="kpi"><div class="v">71,000+</div><div class="l">posts watched &amp; archived</div></div>
+      <div class="kpi"><div class="v g">93,000+</div><div class="l">screenshots saved</div></div>
+      <div class="kpi"><div class="v p">2</div><div class="l">interest topics, live today</div></div>
+    </div>
+    <p style="color:var(--dim);font-size:13px;margin-top:30px">Use <kbd>→</kbd> <kbd>←</kbd> or the dots below to move through the story.</p>
+  </div>
+</section>
+
+<!-- ═══════════════ 2 · THE PROBLEM ═══════════════ -->
+<section class="slide">
+  <h1>The <span class="grad">problem</span></h1>
+  <p class="sub">Your feed moves faster than you do — and the posts you actually care about get buried in it.</p>
+  <div class="grid3">
+    <div class="card">
+      <span class="tag amber">Overload</span>
+      <h3><span class="ico">🌊</span> Too much noise</h3>
+      <p>Hundreds of accounts post every day. The one post from the account that matters — an announcement,
+      a new release, an important photo — scrolls away in minutes and is gone.</p>
+    </div>
+    <div class="card">
+      <span class="tag amber">Missed signals</span>
+      <h3><span class="ico">⏰</span> You find out too late</h3>
+      <p>By the time you manually check, the moment has passed — the post that needed a reply, a share,
+      or just a look is already days old.</p>
+    </div>
+    <div class="card">
+      <span class="tag amber">Lost history</span>
+      <h3><span class="ico">🗑️</span> Nothing is kept</h3>
+      <p>Instagram doesn't archive your feed for you. Posts disappear from view, comments vanish, and
+      there's no way to search what you saw weeks ago.</p>
+    </div>
+  </div>
+  <div class="note">
+    <b>Checking manually doesn't scale.</b> Nobody can scroll three times a day, remember what they've already seen,
+    and still catch the 1 post in 100 that matters. That's a job for a machine — a tireless one.
+  </div>
+</section>
+
+<!-- ═══════════════ 3 · THE SOLUTION ═══════════════ -->
+<section class="slide">
+  <h1>The <span class="grad">solution</span></h1>
+  <p class="sub">One small system that does the boring work forever: watch, sort, alert, act, archive.</p>
+  <div class="flow">
+    <span class="step hl">👀 Watch</span><span class="arr">→</span>
+    <span class="step">🎯 Classify</span><span class="arr">→</span>
+    <span class="step">🔔 Alert</span><span class="arr">→</span>
+    <span class="step">⚡ Act</span><span class="arr">→</span>
+    <span class="step">🗄️ Archive</span>
+  </div>
+  <div class="grid2" style="margin-top:18px">
+    <div class="card">
+      <h3><span class="ico">👀</span> It watches for you</h3>
+      <p>Every 5 minutes, the system browses the feed exactly like a real user — quietly and carefully.
+      New posts are detected, remembered, and never processed twice.</p>
+    </div>
+    <div class="card">
+      <h3><span class="ico">🎯</span> It knows what you care about</h3>
+      <p>You define <b>interest groups</b> — by account, keyword or hashtag. “Everything from these 15
+      accounts”, “anything about this topic”. The system sorts every post against your groups automatically.</p>
+    </div>
+    <div class="card">
+      <h3><span class="ico">🔔</span> It pings you where you live</h3>
+      <p>Matched posts arrive in your <b>Telegram</b> — photo, caption and link — each topic neatly
+      separated, seconds after the post appears.</p>
+    </div>
+    <div class="card">
+      <h3><span class="ico">🗄️</span> It keeps everything</h3>
+      <p>Every post, image and comment is stored in a private archive with a searchable dashboard —
+      your own searchable history of the feed.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 4 · THE BIG WORKFLOW ═══════════════ -->
+<section class="slide">
+  <h1>How one cycle <span class="grad">works</span> — start to finish</h1>
+  <p class="sub">The full run, drawn as a workflow: trigger → browse → collect → detect → enrich → alert → close.
+  The highlighted path is the happy route; the system also knows when to slow down and retry.</p>
+  <div class="diagram-shell">
+    <div class="cap">
+      <span>🔄 <b>The watcher cycle</b> — one complete 5-minute pass (scroll inside the frame)</span>
+      <a href="diagrams/watcher-workflow.html" target="_blank">Open full size ↗</a>
+    </div>
+    <iframe src="diagrams/watcher-workflow.html" title="IG Feed Watcher workflow diagram"></iframe>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <h3><span class="ico">🕐</span> In plain words</h3>
+      <ul>
+        <li><b>Every 5 minutes</b> the system wakes up and logs into Instagram as you.</li>
+        <li>It <b>scrolls the feed</b> like a person would, and picks out only what's <b>new</b> since the last visit.</li>
+        <li>Each new post is <b>enriched</b> — full caption, image, comments — then stored and judged.</li>
+        <li>Matched posts are <b>sent to Telegram</b> with the photo and a link; everything is logged.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="ico">🛡️</span> Built to behave</h3>
+      <ul>
+        <li>Works in <b>small batches</b> (max 10 posts per run) — gentle, low-profile operation.</li>
+        <li><b>Respects rate limits:</b> when Instagram says slow down, it waits and resumes later.</li>
+        <li><b>Never repeats:</b> every post is marked seen, so nothing is processed or alerted twice.</li>
+        <li>If something fails, it <b>retries</b> — and tells you only if it truly can't go on.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 5 · WATCH ═══════════════ -->
+<section class="slide">
+  <h1>Step 1 — <span class="grad">Watch</span> 👀</h1>
+  <p class="sub">A digital assistant that never sleeps, never scrolls past, never forgets what it has seen.</p>
+  <div class="kpi-row">
+    <div class="kpi"><div class="v ac">24/7</div><div class="l">coverage, no human needed</div></div>
+    <div class="kpi"><div class="v">71,002</div><div class="l">posts caught so far</div></div>
+    <div class="kpi"><div class="v g">93,605</div><div class="l">images captured &amp; saved</div></div>
+    <div class="kpi"><div class="v p">44,312</div><div class="l">different authors tracked</div></div>
+  </div>
+  <div class="grid2" style="margin-top:20px">
+    <div class="card">
+      <h3><span class="ico">🖥️</span> It looks like a real user</h3>
+      <ul>
+        <li>Opens Instagram in a real browser with your own logged-in session.</li>
+        <li>Scrolls naturally, dismisses popups, behaves politely — <b>built to stay under the radar</b>.</li>
+        <li>Captures each new post's <b>photo, author, caption and time</b>.</li>
+        <li>For important posts it opens the details and even collects <b>comments</b>.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="ico">🧠</span> It remembers everything</h3>
+      <ul>
+        <li>A private memory of every post ever seen — <b>nothing slips through, nothing repeats</b>.</li>
+        <li>If a post was already processed last week, it's skipped instantly.</li>
+        <li>Backlog is handled calmly, a few posts at a time, so nothing is ever missed during a break.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="note">
+    <b>Result:</b> total peace of mind — whatever appears in the feed, the watcher has seen it, saved it, and judged it before you even open your phone.
+  </div>
+</section>
+
+<!-- ═══════════════ 6 · CLASSIFY ═══════════════ -->
+<section class="slide">
+  <h1>Step 2 — <span class="grad">Classify</span> 🎯</h1>
+  <p class="sub">You decide what matters. The system decides what matches — in seconds, automatically.</p>
+  <div class="grid2">
+    <div class="card">
+      <span class="tag blue">How matching works</span>
+      <h3><span class="ico">🧩</span> Three simple rules</h3>
+      <ul>
+        <li><b>By account</b> — “any post from these 15 accounts” (e.g. key agencies and organizations).</li>
+        <li><b>By keyword</b> — “anything mentioning this topic or phrase”.</li>
+        <li><b>By hashtag</b> — “everything tagged #this”.</li>
+        <li>Posts are <b>re-checked</b> once the full caption is available — a keyword deep in the text still counts.</li>
+        <li>Each match records <b>why</b> it matched, visible in the archive.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <span class="tag pink">Live example</span>
+      <h3><span class="ico">📁</span> Two groups running today</h3>
+      <table>
+        <tr><th>Group</th><th>What it watches</th><th>Telegram topic</th></tr>
+        <tr>
+          <td><span class="pill b1">🌳 Florest</span></td>
+          <td>15 key accounts · 24 topics · 17 hashtags — agrarian development, policy and family farming</td>
+          <td>own topic</td>
+        </tr>
+        <tr>
+          <td><span class="pill b2">📸 Photos</span></td>
+          <td>24 photography accounts</td>
+          <td>own topic</td>
+        </tr>
+      </table>
+      <p style="margin-top:12px;color:var(--dim);font-size:13px">
+        Groups are fully configurable — add one from the dashboard and its Telegram topic is created instantly.
+        Anything that matches nothing goes to the general channel, so nothing is ever lost.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 7 · ALERT ═══════════════ -->
+<section class="slide">
+  <h1>Step 3 — <span class="grad">Alert</span> 🔔</h1>
+  <p class="sub">The moment a post matches, it arrives in your Telegram — photo, caption and link, in the right topic.</p>
+  <div class="cols2">
+    <div class="card" style="padding:8px">
+      <a class="shot" href="assets/telegram-group-topics.jpg" target="_blank">
+        <img src="assets/telegram-group-topics.jpg" alt="Telegram channel with per-group topics" style="height:420px">
+        <div class="cap"><span class="tag amber">Telegram</span><b>One topic per interest group — live from the system</b></div>
+      </a>
+    </div>
+    <div>
+      <div class="card">
+        <h3><span class="ico">💬</span> Why Telegram topics</h3>
+        <ul>
+          <li><b>Separated by topic</b> — “Florest” news doesn't bury the photography channel.</li>
+          <li><b>Photo + caption + link</b> — you see the post itself, no clicks required.</li>
+          <li><b>Match reasons included</b> — you know exactly why it was sent to you.</li>
+          <li><b>Real time</b> — delivery within minutes of the post going live.</li>
+          <li>You read it where you already are — <b>no new app to learn</b>.</li>
+        </ul>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h3><span class="ico">🧩</span> Beyond notifications</h3>
+        <p>Every alert can also trigger <b>custom automation</b> — your own logic runs on each new post:
+        forward it elsewhere, save it to a file, start a workflow. The system hands you the full post, structured and ready.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 8 · ACT ═══════════════ -->
+<section class="slide">
+  <h1>Step 4 — <span class="grad">Act</span> ⚡</h1>
+  <p class="sub">The system doesn't just report — it can respond. Publishing an image back to Instagram takes one request.</p>
+  <div class="diagram-shell">
+    <div class="cap">
+      <span>↔️ <b>Publish flow</b> — from “send this image with this caption” to the live post link</span>
+      <a href="diagrams/posting-sequence.html" target="_blank">Open full size ↗</a>
+    </div>
+    <iframe src="diagrams/posting-sequence.html" title="Posting sequence diagram"></iframe>
+  </div>
+  <div class="grid3">
+    <div class="card">
+      <span class="tag green">Publish</span>
+      <h3><span class="ico">📤</span> Post back to Instagram</h3>
+      <p>Send an image and a caption to the system — it signs in as you, completes the full create-post flow,
+      and returns the <b>link to your live post</b>. Reposting great content takes seconds.</p>
+    </div>
+    <div class="card">
+      <span class="tag blue">Automate</span>
+      <h3><span class="ico">⚙️</span> Custom hooks</h3>
+      <p>Your own scripts can run on every new post — republish, re-share, log, alert, integrate.
+      The system is a <b>platform for your ideas</b>, not a closed box.</p>
+    </div>
+    <div class="card">
+      <span class="tag pink">Safe</span>
+      <h3><span class="ico">🔒</span> Private &amp; controlled</h3>
+      <p>Everything runs on your own machine, with your own Instagram session.
+      Publishing is intentionally kept local — <b>nothing is exposed to the internet</b>.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 9 · ARCHIVE ═══════════════ -->
+<section class="slide">
+  <h1>Step 5 — <span class="grad">Archive &amp; explore</span> 🗄️</h1>
+  <p class="sub">A searchable, visual library of everything the system has ever seen — your own Instagram memory.</p>
+  <div class="grid2">
+    <div class="card">
+      <h3><span class="ico">🖼️</span> The dashboard</h3>
+      <ul>
+        <li><b>Visual grid</b> of every post — screenshot, author, caption, badges.</li>
+        <li><b>Instant search</b> — by author or text, even with typos (forgiving fuzzy search).</li>
+        <li><b>Filters</b> — reels vs photos, date ranges, groups, authors.</li>
+        <li><b>Statistics</b> — what's been posted, by whom, when: trends at a glance.</li>
+        <li><b>Full details</b> — open any post with its comments, and jump to it on Instagram.</li>
+        <li><b>Group management</b> — create, edit and recolor your interest groups live.</li>
+      </ul>
+    </div>
+    <div class="card" style="padding:8px">
+      <a class="shot" href="assets/web-explorer-dashboard-2026-08-21.jpg" target="_blank">
+        <img src="assets/web-explorer-dashboard-2026-08-21.jpg" alt="Web explorer dashboard" style="height:380px">
+        <div class="cap"><span class="tag blue">Dashboard</span><b>The web archive — live from the system</b></div>
+      </a>
+    </div>
+  </div>
+  <div class="note">
+    <b>Why it matters:</b> weeks from now you can still find “that post from last month” — the archive holds
+    the post, its image, its comments and the reasons it was flagged. The feed you follow becomes a library you own.
+  </div>
+</section>
+
+<!-- ═══════════════ 10 · THE ENGINE ═══════════════ -->
+<section class="slide">
+  <h1>Under the hood — <span class="grad">built to last</span> 🛠️</h1>
+  <p class="sub">The full architecture. Simple by design: one session, three coordinated services, one private database.</p>
+  <div class="diagram-shell">
+    <div class="cap">
+      <span>📐 <b>Architecture</b> — how the pieces connect (interactive — try the guided views)</span>
+      <a href="diagrams/architecture.html" target="_blank">Open full size ↗</a>
+    </div>
+    <iframe src="diagrams/architecture.html" title="IG Feed Watcher architecture diagram"></iframe>
+  </div>
+  <div class="grid3">
+    <div class="card">
+      <span class="tag green">Reliable</span>
+      <h3><span class="ico">🛡️</span> Keeps working</h3>
+      <p>Rate-limit aware, retries built in, failures reported to Telegram, deduplication everywhere.
+      It runs for months without attention.</p>
+    </div>
+    <div class="card">
+      <span class="tag blue">Light</span>
+      <h3><span class="ico">🐇</span> Runs anywhere</h3>
+      <p>One modest Linux machine is enough. No cloud bills, no third-party scraping services,
+      no per-post fees — the whole system is yours.</p>
+    </div>
+    <div class="card">
+      <span class="tag pink">Extensible</span>
+      <h3><span class="ico">🧱</span> Grows with you</h3>
+      <p>New groups, new rules, new hooks, new automations — added from the dashboard or a small script.
+      The workflow stays the same; the coverage grows.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 11 · PROOF ═══════════════ -->
+<section class="slide">
+  <h1>Proof, <span class="grad">not promises</span></h1>
+  <p class="sub">Real screenshots from the system in production — the archive and the Telegram channel it feeds.</p>
+  <div class="grid3">
+    <div class="card" style="padding:8px">
+      <a class="shot" href="assets/web-explorer-dashboard-2026-08-21.jpg" target="_blank">
+        <img src="assets/web-explorer-dashboard-2026-08-21.jpg" alt="Explorer dashboard view" loading="lazy">
+        <div class="cap"><span class="tag blue">Archive</span><b>Dashboard — post grid with group badges</b></div>
+      </a>
+    </div>
+    <div class="card" style="padding:8px">
+      <a class="shot" href="assets/web-explorer-full-page-2026-08-21.jpg" target="_blank">
+        <img src="assets/web-explorer-full-page-2026-08-21.jpg" alt="Explorer full page" loading="lazy">
+        <div class="cap"><span class="tag green">Archive</span><b>Full dashboard — stats, filters, search</b></div>
+      </a>
+    </div>
+    <div class="card" style="padding:8px">
+      <a class="shot" href="assets/telegram-group-topics.jpg" target="_blank">
+        <img src="assets/telegram-group-topics.jpg" alt="Telegram topics" loading="lazy">
+        <div class="cap"><span class="tag amber">Alerts</span><b>Telegram — per-group topics, live</b></div>
+      </a>
+    </div>
+  </div>
+  <div class="kpi-row" style="margin-top:20px">
+    <div class="kpi"><div class="v">71,002</div><div class="l">posts archived</div></div>
+    <div class="kpi"><div class="v a">375</div><div class="l">posts matched to groups</div></div>
+    <div class="kpi"><div class="v g">93,605</div><div class="l">screenshots captured</div></div>
+    <div class="kpi"><div class="v p">44,312</div><div class="l">authors tracked</div></div>
+  </div>
+</section>
+
+<!-- ═══════════════ 12 · VALUE ═══════════════ -->
+<section class="slide">
+  <h1>What you <span class="grad">get</span></h1>
+  <p class="sub">The outcomes, in one place.</p>
+  <div class="grid2">
+    <div class="card">
+      <h3><span class="ico">✅</span> Every day, automatically</h3>
+      <ul>
+        <li><b>Never miss</b> a post from the accounts and topics that matter to you.</li>
+        <li><b>Save hours</b> — no more manual scrolling, checking and re-checking.</li>
+        <li><b>Know why</b> — every alert explains itself: account, keyword or hashtag.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="ico">🏆</span> A lasting asset</h3>
+      <ul>
+        <li><b>Own your archive</b> — a searchable library that Instagram doesn't give you.</li>
+        <li><b>Act in seconds</b> — republish what deserves it, straight back to Instagram.</li>
+        <li><b>Scale to any topic</b> — add groups as your interests grow; the system does the rest.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="flow" style="margin-top:26px">
+    <span class="step">👀 Watch</span><span class="arr">→</span>
+    <span class="step">🎯 Classify</span><span class="arr">→</span>
+    <span class="step">🔔 Alert</span><span class="arr">→</span>
+    <span class="step">⚡ Act</span><span class="arr">→</span>
+    <span class="step hl">🗄️ Your archive</span>
+  </div>
+</section>
+
+<!-- ═══════════════ 13 · CLOSE ═══════════════ -->
+<section class="slide">
+  <div style="min-height:74vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center">
+    <span class="eyebrow" style="margin-bottom:18px">Ready when you are</span>
+    <h1 style="font-size:46px">Instagram,<br>finally <span class="grad">working for you</span>.</h1>
+    <p class="sub" style="font-size:17px;max-width:700px;margin-top:16px">
+      The watcher is proven, running, and already watching tens of thousands of posts.
+      Getting started takes three steps:
+    </p>
+    <div class="flow" style="justify-content:center">
+      <span class="step">1 · Define your groups</span><span class="arr">→</span>
+      <span class="step">2 · Connect your Telegram</span><span class="arr">→</span>
+      <span class="step hl">3 · The system takes over</span>
+    </div>
+    <div class="kpi-row" style="margin-top:30px;justify-content:center">
+      <div class="kpi"><div class="v ac">24/7</div><div class="l">always on</div></div>
+      <div class="kpi"><div class="v g">5 min</div><div class="l">response time</div></div>
+      <div class="kpi"><div class="v p">100%</div><div class="l">of posts archived</div></div>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<div id="hint"><kbd>←</kbd> <kbd>→</kbd> navigate · <kbd>F</kbd> fullscreen</div>
+<div id="dots"></div>
+<div id="counter"></div>
+
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  let i = 0;
+  const dots = document.getElementById('dots');
+  const counter = document.getElementById('counter');
+  const progress = document.getElementById('progress');
+
+  slides.forEach((_, idx) => {
+    const b = document.createElement('button');
+    b.title = 'Slide ' + (idx + 1);
+    b.addEventListener('click', () => go(idx));
+    dots.appendChild(b);
+  });
+
+  function go(n) {
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((s, idx) => s.classList.toggle('active', idx === i));
+    dots.querySelectorAll('button').forEach((b, idx) => b.classList.toggle('active', idx === i));
+    counter.textContent = (i + 1) + ' / ' + slides.length;
+    progress.style.width = ((i + 1) / slides.length * 100) + '%';
+    slides[i].scrollTop = 0;
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'IFRAME') return; // let arrow keys work inside diagrams
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); go(i + 1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(i - 1); }
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(slides.length - 1);
+    else if (e.key === 'f' || e.key === 'F') {
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+      else document.exitFullscreen();
+    }
+  });
+
+  let touchX = null;
+  document.addEventListener('touchstart', e => touchX = e.touches[0].clientX, { passive: true });
+  document.addEventListener('touchend', e => {
+    if (touchX === null) return;
+    const dx = e.changedTouches[0].clientX - touchX;
+    if (Math.abs(dx) > 60) go(dx < 0 ? i + 1 : i - 1);
+    touchX = null;
+  }, { passive: true });
+
+  go(0);
+</script>
+</body>
+</html>

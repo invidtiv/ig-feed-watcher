@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IG Feed Watcher — System Report &amp; Presentation</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>📷</text></svg>">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --bg2: #101018;
+    --card: #16161e;
+    --border: #2a2a35;
+    --text: #e4e4e7;
+    --dim: #8a8a96;
+    --accent: #6366f1;
+    --accent-hover: #818cf8;
+    --amber: #f59e0b;
+    --green: #10b981;
+    --red: #ef4444;
+    --pink: #ec4899;
+    --radius: 12px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+  }
+
+  /* ── Deck frame ─────────────────────────────────────────────── */
+  #deck { position: relative; width: 100%; height: 100vh; }
+  .slide {
+    position: absolute; inset: 0;
+    display: none;
+    padding: 44px 56px 76px;
+    overflow-y: auto;
+    animation: fadein .35s ease;
+  }
+  .slide.active { display: block; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  .slide h1 { font-size: 30px; font-weight: 800; letter-spacing: -.02em; margin-bottom: 6px; }
+  .slide h1 .acc { color: var(--accent); }
+  .slide .sub { color: var(--dim); font-size: 15px; margin-bottom: 22px; max-width: 900px; }
+  .slide h2 { font-size: 19px; margin: 20px 0 10px; }
+  .slide h2::before { content: "▍"; color: var(--accent); margin-right: 6px; }
+  .slide ul { list-style: none; }
+  .slide li { padding: 4px 0 4px 22px; position: relative; font-size: 14.5px; line-height: 1.55; color: var(--text); }
+  .slide li::before { content: "▪"; position: absolute; left: 4px; color: var(--accent); }
+  .slide li b { color: #fff; }
+  .slide li .dim { color: var(--dim); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px;
+    background: #101018;
+    border: 1px solid var(--border);
+    padding: 1px 6px;
+    border-radius: 6px;
+    color: #c4b5fd;
+  }
+  .kpi-row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .kpi {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 14px 18px; min-width: 130px;
+  }
+  .kpi .v { font-size: 26px; font-weight: 800; }
+  .kpi .v.g { color: var(--green); }
+  .kpi .v.a { color: var(--amber); }
+  .kpi .v.p { color: var(--pink); }
+  .kpi .v.ac { color: var(--accent-hover); }
+  .kpi .l { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin-top: 2px; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 1000px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 18px 20px;
+  }
+  .card h3 { font-size: 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .card h3 .ico { font-size: 20px; }
+  .card p, .card li { font-size: 13.5px; line-height: 1.6; color: var(--text); }
+  .card .tag {
+    display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; padding: 2px 8px; border-radius: 4px; margin-bottom: 6px;
+  }
+  .tag.blue { background: #6366f120; color: var(--accent-hover); }
+  .tag.green { background: #10b98120; color: #34d399; }
+  .tag.amber { background: #f59e0b20; color: #fbbf24; }
+  .tag.red { background: #ef444420; color: #f87171; }
+  .tag.pink { background: #ec489920; color: #f472b6; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  td code { font-size: 12px; }
+  tr:hover td { background: rgba(99,102,241,.05); }
+
+  .flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 14px 0; }
+  .flow .step {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 12px; font-size: 13px; font-weight: 600;
+  }
+  .flow .step.hl { border-color: var(--accent); color: var(--accent-hover); }
+  .flow .arr { color: var(--dim); font-size: 16px; }
+
+  /* Diagram frames */
+  .diagram-shell {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 6px; margin: 8px 0 10px;
+  }
+  .diagram-shell iframe {
+    width: 100%; height: 62vh; border: none; border-radius: 8px; background: #fff;
+    display: block;
+  }
+  .diagram-shell .cap {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 10px 4px; font-size: 12.5px; color: var(--dim);
+  }
+  .diagram-shell .cap a { color: var(--accent-hover); text-decoration: none; }
+  .diagram-shell .cap a:hover { text-decoration: underline; }
+
+  .cols2 { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(0,1fr); gap: 18px; align-items: start; }
+  @media (max-width: 1100px) { .cols2 { grid-template-columns: 1fr; } }
+
+  .note {
+    border-left: 3px solid var(--amber); background: #f59e0b10;
+    padding: 10px 14px; border-radius: 0 8px 8px 0; font-size: 13px; margin: 10px 0;
+  }
+  .note.red { border-color: var(--red); background: #ef444410; }
+
+  /* ── Nav chrome ─────────────────────────────────────────────── */
+  #progress {
+    position: fixed; top: 0; left: 0; height: 3px; background: var(--accent);
+    width: 0; transition: width .25s ease; z-index: 30;
+  }
+  #counter {
+    position: fixed; bottom: 14px; right: 22px; font-size: 12px; color: var(--dim);
+    z-index: 30; font-variant-numeric: tabular-nums;
+  }
+  #dots { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; z-index: 30; }
+  #dots button {
+    width: 9px; height: 9px; border-radius: 50%; border: none; cursor: pointer;
+    background: #3a3a46; padding: 0; transition: all .2s;
+  }
+  #dots button.active { background: var(--accent-hover); width: 22px; border-radius: 5px; }
+  #hint { position: fixed; bottom: 14px; left: 22px; font-size: 12px; color: var(--dim); z-index: 30; }
+  kbd {
+    background: var(--card); border: 1px solid var(--border); border-bottom-width: 2px;
+    border-radius: 5px; padding: 1px 6px; font-family: inherit; font-size: 11px; color: var(--text);
+  }
+
+  .badge-pill { display:inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 600; border: 1px solid var(--border); }
+  .badge-pill.b1 { color:#fbbf24; border-color:#f59e0b55; background:#f59e0b14; }
+  .badge-pill.b2 { color:#f472b6; border-color:#ec489955; background:#ec489914; }
+
+  /* Screenshot cards */
+  .shot {
+    position: relative; display: block; overflow: hidden;
+    border-radius: 10px; border: 1px solid var(--border); background: #000;
+    text-decoration: none;
+  }
+  .shot img {
+    width: 100%; height: 320px; object-fit: cover; object-position: top;
+    display: block; cursor: zoom-in; transition: transform .3s ease;
+  }
+  .shot:hover img { transform: scale(1.04); }
+  .shot .cap {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    padding: 22px 12px 9px; font-size: 12px; color: #fff;
+    background: linear-gradient(transparent, rgba(0,0,0,.88));
+  }
+  .shot .cap .tag { margin-bottom: 2px; }
+  .shot .cap b { display: block; }
+</style>
+</head>
+<body>
+<div id="progress"></div>
+<div id="deck">
+
+<!-- ═══════════════ 1 · TITLE ═══════════════ -->
+<section class="slide">
+  <div style="min-height:72vh;display:flex;flex-direction:column;justify-content:center">
+    <div class="tag blue" style="width:fit-content">System report · workflow presentation</div>
+    <h1 style="font-size:46px;margin-top:14px">📷 IG Feed <span class="acc">Watcher</span></h1>
+    <p class="sub" style="font-size:17px;max-width:760px">
+      A headless, cron-driven pipeline that watches an Instagram feed, classifies new posts into
+      <b>interest groups</b>, alerts a Telegram channel per group, runs custom hooks — and can even
+      post images back to Instagram. Everything it sees is stored in SQLite and explored through a web dashboard.
+    </p>
+    <div class="kpi-row" style="margin-top:22px">
+      <div class="kpi"><div class="v ac">5 min</div><div class="l">feed check cadence</div></div>
+      <div class="kpi"><div class="v">71,002</div><div class="l">posts stored</div></div>
+      <div class="kpi"><div class="v g">93,605</div><div class="l">screenshots captured</div></div>
+      <div class="kpi"><div class="v a">2</div><div class="l">interest groups → TG topics</div></div>
+      <div class="kpi"><div class="v p">3</div><div class="l">services (watch · api · explorer)</div></div>
+    </div>
+    <p style="color:var(--dim);font-size:13px;margin-top:26px">Use <kbd>→</kbd> <kbd>←</kbd> keys, the dots below, or scroll through the slides.</p>
+  </div>
+</section>
+
+<!-- ═══════════════ 2 · WHAT IT DOES ═══════════════ -->
+<section class="slide">
+  <h1>What the system <span class="acc">does</span></h1>
+  <p class="sub">Three independent services share one session and one database — a watcher, a posting API and an explorer dashboard.</p>
+  <div class="flow">
+    <span class="step hl">Cron scheduler · every 5 min</span><span class="arr">→</span>
+    <span class="step">Headless Chromium opens instagram.com</span><span class="arr">→</span>
+    <span class="step">Feed scraped → new posts detected</span><span class="arr">→</span>
+    <span class="step hl">Group matching</span><span class="arr">→</span>
+    <span class="step">SQLite + screenshot + hook</span><span class="arr">→</span>
+    <span class="step hl">Telegram topics</span>
+  </div>
+  <div class="grid3">
+    <div class="card">
+      <span class="tag blue">Watch</span>
+      <h3><span class="ico">📡</span> Feed watcher</h3>
+      <p><code>watcher.js</code> launches a stealth-flagged Chromium with your <code>cookies.json</code> session, scrolls the feed,
+      parses every <code>&lt;article&gt;</code> (author, caption, timestamp, image URLs, reel/photo), and keeps a
+      <b>seen-set</b> (<code>state.json</code> + DB) so nothing is processed twice. Capped at 10 new posts per run.</p>
+    </div>
+    <div class="card">
+      <span class="tag amber">Alert &amp; act</span>
+      <h3><span class="ico">🔔</span> Classification → Telegram</h3>
+      <p>Every new post is matched against <b>interest groups</b> (accounts, keywords, hashtags in <code>groups.json</code>).
+      Matched posts are sent as <b>photo + caption</b> to the group's own Telegram forum topic; the rest go to the main channel.
+      A custom bash hook (<code>hooks/on-new-post.sh</code>) receives the full post JSON on stdin for any extra logic.</p>
+    </div>
+    <div class="card">
+      <span class="tag green">Publish &amp; explore</span>
+      <h3><span class="ico">📤</span> Posting API + Explorer</h3>
+      <p><code>post-server.js</code> exposes <code>POST /post</code> to publish an image back to Instagram through the same session.
+      <code>server.js</code> is a dark-themed web dashboard that browses, filters and searches everything in <code>posts.db</code>,
+      with per-post comments and manual group assignment.</p>
+    </div>
+  </div>
+  <div class="note">
+    <b>One session, three consumers:</b> the watcher, the poster and the API server all read the same <code>cookies.json</code>;
+    the watcher and the explorer share the same SQLite file <code>posts.db</code> (bind-mounted into the explorer's Docker container).
+  </div>
+</section>
+
+<!-- ═══════════════ 3 · ARCHITECTURE ═══════════════ -->
+<section class="slide">
+  <h1>System <span class="acc">architecture</span></h1>
+  <p class="sub">Interactive diagram — pan, zoom, trace relationships, switch light/dark and use the guided views (Watch loop · Posting API · Web explorer).</p>
+  <div class="diagram-shell">
+    <div class="cap">
+      <span>📐 <b>Architecture diagram</b> — components, boundaries and data flow</span>
+      <a href="diagrams/architecture.html" target="_blank">Open full size ↗</a>
+    </div>
+    <iframe src="diagrams/architecture.html" title="IG Feed Watcher architecture diagram"></iframe>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <h3><span class="ico">🧭</span> How to read it</h3>
+      <ul>
+        <li><b>Watch loop</b> — cron → <code>watcher.js</code> → Chromium → Instagram; results fan out to DB, hook and Telegram.</li>
+        <li><b>Posting path</b> — <code>post-server.js</code> calls <code>poster.js</code>, which drives the same Chromium session.</li>
+        <li><b>Explorer</b> — the Docker-hosted dashboard queries <code>posts.db</code> directly.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="ico">🔐</span> Notable details</h3>
+      <ul>
+        <li><code>cookies.json</code> is the <b>single session secret</b> (highlighted as a security group).</li>
+        <li>All processes run on one host; only the explorer is containerized (Docker, port <code>:4180</code>).</li>
+        <li>External systems: <b>Instagram</b> (scraped &amp; automated) and the <b>Telegram Bot API</b> (notifications + forum-topic management).</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 4 · WATCHER RUN ═══════════════ -->
+<section class="slide">
+  <h1>The watcher <span class="acc">run</span> — every 5 minutes</h1>
+  <p class="sub">One complete cron-triggered pass, drawn as a lane-based workflow. The main path is highlighted; the rate-limit guard is the exception lane.</p>
+  <div class="diagram-shell">
+    <div class="cap">
+      <span>🔄 <b>Workflow diagram</b> — trigger → scrape → detect → enrich → alert (scroll inside the frame)</span>
+      <a href="diagrams/watcher-workflow.html" target="_blank">Open full size ↗</a>
+    </div>
+    <iframe src="diagrams/watcher-workflow.html" title="Watcher run workflow diagram"></iframe>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <h3><span class="ico">🧩</span> Step by step</h3>
+      <ul>
+        <li><b>1 · Prepare</b> — init SQLite schema, load the seen-set (<code>state.json</code> ∪ DB shortcodes), load groups, ensure each group has a Telegram forum topic.</li>
+        <li><b>2 · Connect</b> — launch Chromium (stealth UA, automation flags off), set cookies, open instagram.com with 2 retries, dismiss “Not now” popups, abort fonts/media for speed.</li>
+        <li><b>3 · Scrape</b> — scroll the feed 3× and parse <code>&lt;article&gt;</code> blocks into post objects.</li>
+        <li><b>4 · Detect</b> — filter out seen shortcodes; sort matched posts first; cap at 10 per run.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="ico">🧩</span> Step by step (cont.)</h3>
+      <ul>
+        <li><b>5 · Enrich</b> — capture the post image (or screenshot the article); open the detail page for matched / likely-truncated posts to get the full caption and comments.</li>
+        <li><b>6 · Persist</b> — <code>INSERT</code> the post + comments into <code>posts.db</code>.</li>
+        <li><b>7 · Alert</b> — run <code>on-new-post.sh</code> with JSON on stdin, then send a Telegram <code>sendPhoto</code> to each matched group's topic (or the main channel).</li>
+        <li><b>8 · Close</b> — mark everything seen, save <code>state.json</code>, persist the rate-limit cooldown.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 5 · GROUPS ═══════════════ -->
+<section class="slide">
+  <h1>Interest groups &amp; <span class="acc">Telegram routing</span></h1>
+  <p class="sub">Posts are classified at runtime and routed to per-group Telegram forum topics — the core “signal from noise” mechanism.</p>
+  <div class="grid2">
+    <div class="card">
+      <span class="tag amber">Classification</span>
+      <h3><span class="ico">🎯</span> How a post matches a group</h3>
+      <ul>
+        <li><b>Account</b> — post author contains any account in the group's <code>accounts[]</code> list.</li>
+        <li><b>Keyword</b> — caption contains any <code>keywords[]</code> phrase (case-insensitive).</li>
+        <li><b>Hashtag</b> — caption contains any <code>hashtags[]</code> tag.</li>
+        <li>Match reasons are stored (<code>“account @mda_sc”</code>, <code>“keyword 'pronaf'”</code>…) and shown in the explorer.</li>
+        <li>After detail-scraping a <b>fuller caption</b>, groups are re-matched — a keyword deep in the caption still counts.</li>
+        <li>Unmatched posts go to the main channel; matched posts only go to their groups' topics.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <span class="tag blue">Telegram topics</span>
+      <h3><span class="ico">💬</span> One forum topic per group</h3>
+      <ul>
+        <li>On startup, each group without <code>telegramThreadId</code> gets a topic via <code>createForumTopic</code>.</li>
+        <li>The group's color is mapped to the closest of Telegram's 8 icon colors; the ID is written back to <code>groups.json</code>.</li>
+        <li>Notifications include the screenshot, author, post link, match reasons and captured-comment count.</li>
+        <li>Created from the explorer too — adding a group in the dashboard provisions its topic.</li>
+      </ul>
+    </div>
+  </div>
+  <h2>Current groups</h2>
+  <table>
+    <tr><th>Group</th><th>Color</th><th>Accounts</th><th>Keywords</th><th>Hashtags</th><th>Telegram topic</th></tr>
+    <tr>
+      <td><span class="badge-pill b1">🌳 Florest</span></td>
+      <td><code>#26f50a</code></td>
+      <td>15 (MDA, Embrapa, INCRA, gov.br…)</td>
+      <td>24 (agrarian development, PRONAF…)</td>
+      <td>17 (#agriculturafamiliar…)</td>
+      <td><code>thread 1800</code></td>
+    </tr>
+    <tr>
+      <td><span class="badge-pill b2">📸 Photos</span></td>
+      <td><code>#ff9ed7</code></td>
+      <td>24 photography accounts</td>
+      <td>—</td>
+      <td>—</td>
+      <td><code>thread 1842</code></td>
+    </tr>
+  </table>
+  <div class="note">
+    <b>Legacy migration:</b> the old <code>priority-list.json</code> format is auto-migrated into a first “Priority” group on first run.
+    Posts can also be assigned to groups <b>manually</b> from the explorer modal (reason <code>manual</code>).
+  </div>
+</section>
+
+<!-- ═══════════════ 6 · POSTING API ═══════════════ -->
+<section class="slide">
+  <h1>The posting <span class="acc">API</span></h1>
+  <p class="sub">Publish images back to Instagram over HTTP — a full create-post UI automation driven by one synchronous request.</p>
+  <div class="diagram-shell">
+    <div class="cap">
+      <span>↔️ <b>Sequence diagram</b> — POST /post from client to permalink</span>
+      <a href="diagrams/posting-sequence.html" target="_blank">Open full size ↗</a>
+    </div>
+    <iframe src="diagrams/posting-sequence.html" title="Posting API sequence diagram"></iframe>
+  </div>
+  <div class="grid3">
+    <div class="card">
+      <h3><span class="ico">🔌</span> Endpoints</h3>
+      <ul>
+        <li><code>GET /health</code> — status + cookie presence.</li>
+        <li><code>GET /status</code> — cookie count + <code>sessionid</code> check.</li>
+        <li><code>POST /post</code> — multipart <code>image</code>+<code>caption</code>, or JSON <code>{imagePath, caption}</code>.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="ico">🖱️</span> UI automation steps</h3>
+      <ul>
+        <li>“New post” → “Post” → upload file → Next (crop) → Next (filter) → caption → <b>Share</b>.</li>
+        <li>Debug screenshots saved at each failing step.</li>
+        <li>Success = extract permalink (<code>/p/XXXX</code>) and return it.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="ico">🔒</span> Safety</h3>
+      <ul>
+        <li>Bound to <code>localhost:4030</code> — loopback only, never exposed publicly.</li>
+        <li>Images limited to 20 MB, jpg/png/webp/gif only.</li>
+        <li>Same <code>cookies.json</code> session as the watcher; CLI fallback: <code>node poster.js img.jpg "caption"</code>.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 7 · DATA ═══════════════ -->
+<section class="slide">
+  <h1>Data &amp; <span class="acc">storage model</span></h1>
+  <p class="sub">One SQLite database is the source of truth, shared between the watcher (writes) and the explorer (reads).</p>
+  <div class="cols2">
+    <div>
+      <div class="card">
+        <h3><span class="ico">🗄️</span> <code>posts.db</code> — tables</h3>
+        <table>
+          <tr><th>Table</th><th>Columns (key fields)</th><th>Purpose</th></tr>
+          <tr>
+            <td><code>posts</code></td>
+            <td><code>shortcode PK</code>, permalink, author, caption, timestamp, <code>is_reel</code>, <code>is_priority</code>, <code>priority_reasons</code>, <code>image_urls</code>, <code>screenshot_path</code>, <code>scraped_at</code>, <code>seen_at</code>, <code>matched_groups</code></td>
+            <td>Every post ever seen on the feed</td>
+          </tr>
+          <tr>
+            <td><code>comments</code></td>
+            <td>id, shortcode, author, text, timestamp, <code>like_count</code>, <code>scraped_at</code> · unique(shortcode, author, text)</td>
+            <td>Comments captured from detail pages</td>
+          </tr>
+        </table>
+        <p style="margin-top:10px;color:var(--dim);font-size:12.5px">
+          Indexes on author, priority, timestamp, seen_at, comment shortcode/author. A custom
+          <code>fuzzy_match()</code> SQL function (Unicode-normalize + Levenshtein ≤ 2) powers forgiving author/caption search.
+        </p>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h3><span class="ico">📁</span> Companion files</h3>
+        <table>
+          <tr><th>File / dir</th><th>Role</th></tr>
+          <tr><td><code>state.json</code></td><td>fast seen-set (capped 500), lastRun, lastPostTime, rate-limit cooldown</td></tr>
+          <tr><td><code>groups.json</code></td><td>interest groups + Telegram thread IDs (migrated from priority-list.json)</td></tr>
+          <tr><td><code>screenshots/</code></td><td>one JPEG per post shortcode (93k+ files) — served by the explorer</td></tr>
+          <tr><td><code>logs/</code></td><td><code>watcher.log</code>, <code>poster.log</code>, <code>posts.log</code>, <code>priority-posts.jsonl</code>, debug screenshots</td></tr>
+          <tr><td><code>uploads/</code></td><td>multipart uploads for the posting API</td></tr>
+          <tr><td><code>cookies.json</code></td><td>Instagram session (the only secret)</td></tr>
+        </table>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h3><span class="ico">🧮</span> Hook payload shape</h3>
+        <p style="font-size:12.5px"><code>{ shortcode, permalink, author, timestamp, caption, imageUrls, isReel, scrapedAt, priority, priorityReasons, groups, comments }</code>
+        → piped to <code>hooks/on-new-post.sh</code> on stdin (parsed with <code>jq</code> or <code>python3</code>).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 8 · EXPLORER ═══════════════ -->
+<section class="slide">
+  <h1>The web <span class="acc">explorer</span></h1>
+  <p class="sub">A self-contained Express + vanilla-JS dashboard (dark theme, Docker-hosted on port 4180) over the same SQLite file — live at <code>http://localhost:4180</code>. Real screenshots of it on the next slide.</p>
+  <div class="grid2">
+    <div class="card">
+      <h3><span class="ico">🖥️</span> UI features</h3>
+      <ul>
+        <li><b>Grid view</b> — post cards with screenshot, author, caption preview, Reel/comments badges, group badges.</li>
+        <li><b>Filters</b> — author (fuzzy), caption search (fuzzy), Reel vs photo, date range, group. Debounced, paginated (50/page).</li>
+        <li><b>Stats view</b> — totals, priority count, reels, authors, last 24h/7d, comments, top authors, posts per day, group breakdown.</li>
+        <li><b>Post modal</b> — full caption, comments with like counts, “Open on IG”, and <b>manual group assignment</b> checkboxes.</li>
+        <li><b>Groups admin</b> (<code>/settings</code>) — create/rename/recolor/delete groups; add/remove accounts, keywords, hashtags. Creating a group also provisions its Telegram topic.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="ico">🔗</span> HTTP API</h3>
+      <table>
+        <tr><th>Route</th><th>Purpose</th></tr>
+        <tr><td><code>GET /api/stats</code></td><td>dashboard aggregates</td></tr>
+        <tr><td><code>GET /api/posts</code></td><td>filtered, sorted, paginated posts</td></tr>
+        <tr><td><code>GET /api/authors</code></td><td>author leaderboard</td></tr>
+        <tr><td><code>GET /api/posts/:shortcode</code></td><td>post + comments detail</td></tr>
+        <tr><td><code>GET /api/comments</code></td><td>global comment search</td></tr>
+        <tr><td><code>GET/POST /api/groups</code></td><td>list / create groups</td></tr>
+        <tr><td><code>PUT/DELETE /api/groups/:id</code></td><td>update / delete groups</td></tr>
+        <tr><td><code>POST /api/groups/:id/add|remove</code></td><td>manage account/keyword/hashtag</td></tr>
+        <tr><td><code>POST /api/posts/:shortcode/groups</code></td><td>manual group assignment</td></tr>
+        <tr><td><code>/screenshots</code></td><td>static image serving</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 9 · SCREENSHOTS ═══════════════ -->
+<section class="slide">
+  <h1>Real system <span class="acc">screenshots</span></h1>
+  <p class="sub">Captures from the live deployment — the web explorer running on the local machine and the Telegram channel it feeds. Click any image to open it full size.</p>
+  <div class="grid3">
+    <div class="card" style="padding:8px">
+      <a class="shot" href="assets/web-explorer-dashboard-2026-08-21.jpg" target="_blank">
+        <img src="assets/web-explorer-dashboard-2026-08-21.jpg" alt="Web Explorer dashboard view" loading="lazy">
+        <div class="cap"><span class="tag blue">Frontend</span><b>Web Explorer — dashboard view · 2026-08-21</b></div>
+      </a>
+    </div>
+    <div class="card" style="padding:8px">
+      <a class="shot" href="assets/web-explorer-full-page-2026-08-21.jpg" target="_blank">
+        <img src="assets/web-explorer-full-page-2026-08-21.jpg" alt="Web Explorer full-page capture" loading="lazy">
+        <div class="cap"><span class="tag green">Frontend</span><b>Web Explorer — full-page capture · 2026-08-21</b></div>
+      </a>
+    </div>
+    <div class="card" style="padding:8px">
+      <a class="shot" href="assets/telegram-group-topics.jpg" target="_blank">
+        <img src="assets/telegram-group-topics.jpg" alt="Telegram channel with group topics" loading="lazy">
+        <div class="cap"><span class="tag amber">Telegram</span><b>Telegram — group topics / notifications</b></div>
+      </a>
+    </div>
+  </div>
+  <div class="note" style="margin-top:16px">
+    <b>What to look for:</b> post cards with group badges, reel/comment badges and captions in the grid; the stats bar
+    (posts, authors, last 24 h / 7 d); and in Telegram, one forum topic per interest group —
+    <span class="badge-pill b1">🌳 Florest</span> and <span class="badge-pill b2">📸 Photos</span> —
+    each receiving photo + caption alerts as new posts match.
+  </div>
+</section>
+
+<!-- ═══════════════ 10 · DEPLOYMENT ═══════════════ -->
+<section class="slide">
+  <h1>Deployment &amp; <span class="acc">scheduling</span></h1>
+  <p class="sub">Everything runs on one Linux host; the watcher is a recurring cron job, the explorer is a Docker container.</p>
+  <div class="grid3">
+    <div class="card">
+      <span class="tag blue">Schedule</span>
+      <h3><span class="ico">⏰</span> Cron job</h3>
+      <ul>
+        <li>Job <code>IG Feed Watcher</code> · schedule <code>*/5 * * * *</code> · repeat ∞</li>
+        <li>Runs <code>node watcher.js</code> in the project dir; logs append to <code>logs/</code>.</li>
+        <li>Alternative documented: classic crontab or systemd timer.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <span class="tag green">Explorer</span>
+      <h3><span class="ico">🐳</span> Docker container</h3>
+      <ul>
+        <li>Container <code>ig-explorer</code> · image <code>node:22-slim</code> + express only.</li>
+        <li>Ports <code>4180:4180</code> (LAN + Tailnet; keep it inside your network boundary).</li>
+        <li>Bind mounts: <code>posts.db</code>, <code>screenshots/</code>, <code>groups.json</code>, <code>.env.config</code> — stays in sync with the watcher.</li>
+        <li>Joined to the <code>nginx-proxy-manager</code> network; a systemd unit (<code>ig-explorer.service</code>) exists as an alternative.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <span class="tag amber">Posting API</span>
+      <h3><span class="ico">📤</span> Loopback service</h3>
+      <ul>
+        <li><code>node post-server.js</code> → <code>localhost:4030</code> (port via <code>IG_POST_API_PORT</code>).</li>
+        <li>Intentionally <b>not</b> exposed publicly — Tailnet/internal callers only.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <h3><span class="ico">⚙️</span> Configuration resolution</h3>
+    <p>
+      Telegram credentials resolve in order: <code>.env.config</code> (bot token + home channel) → process env
+      (<code>TG_BOT_TOKEN</code>, <code>TELEGRAM_HOME_CHANNEL</code>). Watcher behavior lives in the <code>CONFIG</code> block of
+      <code>watcher.js</code> (scroll count, page timeout, per-run cap, rate-limit cooldown, comment scraping toggles).
+    </p>
+  </div>
+</section>
+
+<!-- ═══════════════ 11 · LIVE STATS ═══════════════ -->
+<section class="slide">
+  <h1>Live system <span class="acc">snapshot</span></h1>
+  <p class="sub">Measured from the running system (August 2026) — the database, the screenshots directory and the scheduler.</p>
+  <div class="kpi-row">
+    <div class="kpi"><div class="v">71,002</div><div class="l">posts in posts.db</div></div>
+    <div class="kpi"><div class="v a">375</div><div class="l">group-matched posts</div></div>
+    <div class="kpi"><div class="v g">93,605</div><div class="l">screenshot files</div></div>
+    <div class="kpi"><div class="v ac">44,312</div><div class="l">distinct authors</div></div>
+    <div class="kpi"><div class="v p">~156 MB</div><div class="l">posts.db size</div></div>
+  </div>
+  <div class="grid2" style="margin-top:18px">
+    <div class="card">
+      <h3><span class="ico">🕐</span> Watcher state (<code>state.json</code>)</h3>
+      <table>
+        <tr><td>Last run</td><td><code>2026-08-21T09:40:50Z</code></td></tr>
+        <tr><td>Newest post seen</td><td><code>2026-08-21T07:01:58Z</code></td></tr>
+        <tr><td>Seen-post cache</td><td>500 shortcodes (capped; DB is the full set)</td></tr>
+        <tr><td>Rate-limit cooldown</td><td>persisted across runs</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3><span class="ico">📈</span> Growth indicators</h3>
+      <table>
+        <tr><td><code>logs/watcher.log</code></td><td>~102 MB of run traces</td></tr>
+        <tr><td><code>logs/posts.log</code></td><td>every hook invocation</td></tr>
+        <tr><td><code>logs/priority-posts.jsonl</code></td><td>all matched posts as JSONL</td></tr>
+        <tr><td>Backups</td><td>dated copies of <code>posts.db</code> (e.g. <code>posts.db.bak-20260707-*</code>)</td></tr>
+        <tr><td>Comments stored</td><td>0 rows right now — detail scraping is throttled; the pipeline supports it</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 12 · RISKS ═══════════════ -->
+<section class="slide">
+  <h1>Operational <span class="acc">notes &amp; risks</span></h1>
+  <p class="sub">Honest assessment of the fragile parts — and the mitigations already built in.</p>
+  <div class="grid2">
+    <div class="card">
+      <h3><span class="ico">🛡️</span> Built-in mitigations</h3>
+      <ul>
+        <li><b>Rate limits:</b> detail pages open only for matched / likely-truncated captions; ≥3 s between detail requests; a 429 pauses detail scraping for 30 min (cooldown persisted).</li>
+        <li><b>Anti-bot:</b> real Chromium, realistic user-agent, <code>AutomationControlled</code> disabled, fonts/media aborted, popups dismissed.</li>
+        <li><b>Dedup &amp; backlog control:</b> every feed post is marked seen (even unprocessed), per-run cap of 10.</li>
+        <li><b>Failure alerts:</b> fatal errors are sent to Telegram; hook and poster failures never kill the run.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="ico">⚠️</span> Known risks</h3>
+      <ul>
+        <li><b>Session expiry:</b> Instagram rotates sessions — cookies must be re-exported every few weeks (<code>login.js</code> / DevTools / <code>export-cookies.py</code>).</li>
+        <li><b>Detection / ToS:</b> scraping and UI automation violate Instagram's terms; an account ban is a real possibility.</li>
+        <li><b>Selector drift:</b> parsing and the create-post flow depend on Instagram's DOM; debug dumps in the logs help re-fix selectors.</li>
+        <li><b>Explorer exposure:</b> port 4180 is bound on all interfaces and has <b>no authentication</b> — it should only be reachable via LAN/Tailnet, ideally behind a proxy with auth.</li>
+        <li><b>DB growth:</b> ~156 MB and growing; snapshot backups exist, no retention policy.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="note red">
+    <b>Recommendations:</b> rotate the session proactively · back the explorer with an auth layer or private Tailnet ACL · add a
+    screenshot/DB retention job · move the watcher to a more conservative cadence if Instagram rate-limits appear.
+  </div>
+</section>
+
+<!-- ═══════════════ 13 · FILES ═══════════════ -->
+<section class="slide">
+  <h1>Repository <span class="acc">file map</span></h1>
+  <p class="sub">Every piece of the project in one glance (runtime data and logs omitted).</p>
+  <div class="grid3">
+    <div class="card">
+      <h3><span class="ico">🚀</span> Core services</h3>
+      <table>
+        <tr><td><code>watcher.js</code></td><td>feed watcher (Puppeteer + SQLite)</td></tr>
+        <tr><td><code>server.js</code></td><td>web explorer dashboard</td></tr>
+        <tr><td><code>post-server.js</code></td><td>posting HTTP API</td></tr>
+        <tr><td><code>poster.js</code></td><td>create-post automation lib</td></tr>
+        <tr><td><code>hooks/on-new-post.sh</code></td><td>per-post custom hook</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3><span class="ico">🔑</span> Session &amp; config</h3>
+      <table>
+        <tr><td><code>login.js</code></td><td>interactive login → cookies export</td></tr>
+        <tr><td><code>export-cookies.py</code></td><td>extract cookies from a Chrome profile</td></tr>
+        <tr><td><code>cookies.json</code></td><td>live session (secret)</td></tr>
+        <tr><td><code>.env.config</code></td><td>Telegram + tuning (secret)</td></tr>
+        <tr><td><code>groups.json</code></td><td>interest groups + topics</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3><span class="ico">🧰</span> Ops &amp; utilities</h3>
+      <table>
+        <tr><td><code>Dockerfile</code> + <code>docker-compose.yml</code></td><td>explorer container</td></tr>
+        <tr><td><code>ig-explorer.service</code></td><td>systemd alternative</td></tr>
+        <tr><td><code>republish-photos.js</code></td><td>one-shot backlog → Photos topic</td></tr>
+        <tr><td><code>create-topic.js</code> / <code>setup-topic.js</code></td><td>Telegram forum setup helpers</td></tr>
+        <tr><td><code>check-chat.sh</code></td><td>channel/forum diagnostics</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="note" style="margin-top:16px">
+    Runtime artifacts: <code>posts.db</code> (SQLite) · <code>state.json</code> · <code>screenshots/</code> · <code>uploads/</code> · <code>logs/</code>.
+    Git history is short: initial commit → “Add web explorer, posting API, full caption extraction, fuzzy search” → “Restore Photos group filter and republish backlog”.
+  </div>
+</section>
+
+<!-- ═══════════════ 14 · CLOSE ═══════════════ -->
+<section class="slide">
+  <div style="min-height:72vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center">
+    <h1 style="font-size:40px">That's the <span class="acc">IG Feed Watcher</span> 🚀</h1>
+    <p class="sub" style="font-size:16px;max-width:720px">
+      A small but complete automation stack: <b>watch</b> every 5 minutes → <b>classify</b> into interest groups →
+      <b>alert</b> Telegram topics → <b>hook</b> custom logic → <b>publish</b> back → <b>explore</b> everything in a dashboard.
+    </p>
+    <div class="kpi-row" style="margin-top:24px">
+      <div class="kpi"><div class="v ac">1</div><div class="l">session cookie, 3 consumers</div></div>
+      <div class="kpi"><div class="v">2</div><div class="l">external platforms (IG · Telegram)</div></div>
+      <div class="kpi"><div class="v g">3</div><div class="l">validated diagrams in this deck</div></div>
+    </div>
+    <p style="color:var(--dim);font-size:13.5px;margin-top:26px">
+      Explorer → <code>http://localhost:4180</code> · Post API → <code>http://localhost:4030/health</code><br>
+      Diagrams: <code>presentation/diagrams/</code> — open them standalone for themes, guided views, search and export.
+    </p>
+  </div>
+</section>
+
+</div>
+
+<div id="hint"><kbd>←</kbd> <kbd>→</kbd> navigate · <kbd>F</kbd> fullscreen</div>
+<div id="dots"></div>
+<div id="counter"></div>
+
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  let i = 0;
+  const dots = document.getElementById('dots');
+  const counter = document.getElementById('counter');
+  const progress = document.getElementById('progress');
+
+  slides.forEach((_, idx) => {
+    const b = document.createElement('button');
+    b.title = 'Slide ' + (idx + 1);
+    b.addEventListener('click', () => go(idx));
+    dots.appendChild(b);
+  });
+
+  function go(n) {
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((s, idx) => s.classList.toggle('active', idx === i));
+    dots.querySelectorAll('button').forEach((b, idx) => b.classList.toggle('active', idx === i));
+    counter.textContent = (i + 1) + ' / ' + slides.length;
+    progress.style.width = ((i + 1) / slides.length * 100) + '%';
+    slides[i].scrollTop = 0;
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'IFRAME') return; // let arrow keys work inside diagrams
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); go(i + 1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(i - 1); }
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(slides.length - 1);
+    else if (e.key === 'f' || e.key === 'F') {
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+      else document.exitFullscreen();
+    }
+  });
+
+  let touchX = null;
+  document.addEventListener('touchstart', e => touchX = e.touches[0].clientX, { passive: true });
+  document.addEventListener('touchend', e => {
+    if (touchX === null) return;
+    const dx = e.changedTouches[0].clientX - touchX;
+    if (Math.abs(dx) > 60) go(dx < 0 ? i + 1 : i - 1);
+    touchX = null;
+  }, { passive: true });
+
+  go(0);
+</script>
+</body>
+</html>

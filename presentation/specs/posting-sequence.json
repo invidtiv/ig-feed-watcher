@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Posting API — POST /post",
+    "viewBox": [1050, 500],
+    "column_fit": "spread",
+    "animation": "trace",
+    "quality_profile": "showcase"
+  },
+  "participants": [
+    { "id": "client", "type": "external", "label": "Client", "sublabel": "curl · scripts · agents" },
+    { "id": "api", "type": "backend", "label": "post-server.js", "sublabel": "Express :4030" },
+    { "id": "poster", "type": "backend", "label": "poster.js", "sublabel": "postToInstagram()" },
+    { "id": "browser", "type": "backend", "label": "Headless Chromium", "sublabel": "Puppeteer" },
+    { "id": "ig", "type": "external", "label": "Instagram", "sublabel": "create-post UI", "brand": "instagram" }
+  ],
+  "segments": [
+    { "from": 140, "to": 290, "label": "Receive + automate create-post" },
+    { "from": 306, "to": 430, "label": "Confirm + respond" }
+  ],
+  "messages": [
+    { "from": "client", "to": "api", "y": 160, "label": "POST /post — image + caption", "variant": "emphasis" },
+    { "from": "api", "to": "poster", "y": 184, "label": "postToInstagram(path, caption)", "variant": "emphasis" },
+    { "from": "poster", "to": "browser", "y": 208, "label": "launch · set cookies.json", "variant": "default" },
+    { "from": "browser", "to": "ig", "y": 232, "label": "open instagram.com", "variant": "default" },
+    { "from": "ig", "to": "browser", "y": 260, "label": "feed ready", "variant": "return" },
+    { "from": "poster", "to": "browser", "y": 284, "label": "New post → Post → upload image", "variant": "emphasis" },
+    { "from": "ig", "to": "browser", "y": 312, "label": "crop dialog shown", "variant": "return" },
+    { "from": "poster", "to": "browser", "y": 336, "label": "Next (crop) · Next (filter) · caption", "variant": "default" },
+    { "from": "poster", "to": "browser", "y": 364, "label": "click Share", "variant": "emphasis" },
+    { "from": "ig", "to": "browser", "y": 392, "label": "post shared → permalink /p/XXXX", "variant": "return" },
+    { "from": "api", "to": "client", "y": 416, "label": "200 JSON {success, permalink}", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "api", "from": 154, "to": 192, "type": "backend" },
+    { "participant": "poster", "from": 178, "to": 366, "type": "backend" },
+    { "participant": "browser", "from": 202, "to": 394, "type": "backend" },
+    { "participant": "ig", "from": 226, "to": 394, "type": "external" },
+    { "participant": "api", "from": 406, "to": 420, "type": "backend" }
+  ]
+}

@@ -1381,7 +1381,7 @@ loadGroups();
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('IG Feed Explorer running on http://0.0.0.0:' + PORT);
+  console.log('IG Feed Explorer running on port ' + PORT);
   console.log('Database: ' + DB_PATH);
   console.log('Screenshots: ' + SCREENSHOTS_DIR);
 });

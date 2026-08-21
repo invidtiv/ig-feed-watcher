@@ -18,7 +18,7 @@ cd /home/bsdev/ig-feed-watcher
 node post-server.js
 ```
 
-The server listens on `127.0.0.1:4030` (Tailnet/internal only — no public exposure).
+The server listens on `localhost:4030` (loopback/Tailnet only — no public exposure).
 
 ### Endpoints
 
@@ -41,14 +41,14 @@ Posts an image to Instagram. Two modes:
 
 **Mode 1 — Multipart file upload:**
 ```bash
-curl -X POST http://127.0.0.1:4030/post \
+curl -X POST http://localhost:4030/post \
   -F "image=@/path/to/image.jpg" \
   -F "caption=Your caption here 📸"
 ```
 
 **Mode 2 — JSON with existing file path:**
 ```bash
-curl -X POST http://127.0.0.1:4030/post \
+curl -X POST http://localhost:4030/post \
   -H "Content-Type: application/json" \
   -d '{"imagePath": "/path/to/image.jpg", "caption": "Your caption"}'
 ```

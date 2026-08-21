@@ -15,7 +15,7 @@
  *     OR JSON body:
  *       { "imagePath": "/abs/path/to/image.jpg", "caption": "text" }
  *
- * No authentication — bind to 127.0.0.1 / Tailnet only.
+ * No authentication — bind to localhost only.
  * Default port: 4030 (configurable via IG_POST_API_PORT env var)
  */
 
@@ -30,7 +30,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
 
 const PORT = process.env.IG_POST_API_PORT || 4030;
-const HOST = '127.0.0.1'; // Tailnet/internal only — no public exposure
+const HOST = '127.0.0.1'; // loopback bind — no public exposure
 
 const CONFIG = {
   cookiesFile: join(ROOT, 'cookies.json'),
@@ -181,7 +181,7 @@ app.post('/post', upload.single('image'), async (req, res) => {
 app.listen(PORT, HOST, () => {
   log(`═══════════════════════════════════════════`);
   log(`IG Post API Server`);
-  log(`  Listening: http://${HOST}:${PORT}`);
+  log(`  Listening: http://localhost:${PORT}`);
   log(`  Endpoints:`);
   log(`    GET  /health`);
   log(`    GET  /status`);

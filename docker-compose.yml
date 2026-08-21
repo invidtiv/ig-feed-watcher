@@ -13,6 +13,7 @@ services:
       - ./screenshots:/app/screenshots
       - ./priority-list.json:/app/priority-list.json:ro
       - ./groups.json:/app/groups.json
+      - ./sources.json:/app/sources.json
       - ./.env.config:/app/.env.config:ro
     networks:
       - nginx-proxy-manager_npm-network

@@ -23,6 +23,7 @@ import { fileURLToPath } from 'url';
 import { execSync, spawn } from 'child_process';
 import { homedir } from 'os';
 import { DatabaseSync } from 'node:sqlite';
+import { listSources, getIngester, registerIngester, sanitizeCookies } from './sources.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -98,7 +99,9 @@ function initDB() {
       screenshot_path TEXT,
       scraped_at    TEXT,
       seen_at       TEXT DEFAULT (datetime('now')),
-      matched_groups TEXT DEFAULT '[]'
+      matched_groups TEXT DEFAULT '[]',
+      source_id     TEXT DEFAULT '',
+      source_name   TEXT DEFAULT ''
     );
 
     CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author);
@@ -120,8 +123,12 @@ function initDB() {
     CREATE INDEX IF NOT EXISTS idx_comments_shortcode ON comments(shortcode);
     CREATE INDEX IF NOT EXISTS idx_comments_author ON comments(author);
   `);
-  // Migration: add matched_groups to pre-existing databases
+  // Migrations: add columns introduced after the initial schema to
+  // pre-existing databases. Each is best-effort (throws if already present).
   try { db.exec("ALTER TABLE posts ADD COLUMN matched_groups TEXT DEFAULT '[]'"); } catch {}
+  try { db.exec("ALTER TABLE posts ADD COLUMN source_id TEXT DEFAULT ''"); } catch {}
+  try { db.exec("ALTER TABLE posts ADD COLUMN source_name TEXT DEFAULT ''"); } catch {}
+  try { db.exec("CREATE INDEX IF NOT EXISTS idx_posts_source ON posts(source_id)"); } catch {}
   return db;
 }
 
@@ -157,9 +164,10 @@ function savePostToDB(post, matchedGroups, screenshotPath) {
     const stmt = db.prepare(`
       INSERT OR IGNORE INTO posts
         (shortcode, permalink, author, caption, timestamp, is_reel,
-         is_priority, priority_reasons, image_urls, screenshot_path, scraped_at, matched_groups)
+         is_priority, priority_reasons, image_urls, screenshot_path, scraped_at, matched_groups,
+         source_id, source_name)
       VALUES
-        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       post.shortcode,
@@ -174,6 +182,8 @@ function savePostToDB(post, matchedGroups, screenshotPath) {
       screenshotPath || null,
       post.scrapedAt || new Date().toISOString(),
       JSON.stringify(matched),
+      post.source_id || '',
+      post.source_name || '',
     );
   } catch (err) {
     log(`DB save error for ${post.shortcode}: ${err.message}`);
@@ -469,29 +479,10 @@ function saveState(state) {
 }
 
 // ─── Cookies ──────────────────────────────────────────────────────────────────
-
-function loadCookies() {
-  if (!existsSync(CONFIG.cookiesFile)) {
-    throw new Error(`Cookies file not found: ${CONFIG.cookiesFile}`);
-  }
-  const raw = JSON.parse(readFileSync(CONFIG.cookiesFile, 'utf-8'));
-
-  // Accept both browser DevTools format and Puppeteer format
-  // DevTools format: [{name, value, domain, path, expires, httpOnly, secure, sameSite}]
-  // Puppeteer format: [{name, value, domain, path, expires, httpOnly, secure, sameSite}]
-  // They're basically the same; just ensure domain is right for instagram
-
-  return raw.map(c => ({
-    name: c.name,
-    value: c.value,
-    domain: c.domain || '.instagram.com',
-    path: c.path || '/',
-    expires: c.expires || c.expirationDate || -1,
-    httpOnly: c.httpOnly ?? false,
-    secure: c.secure ?? true,
-    sameSite: c.sameSite || 'Lax',
-  }));
-}
+//
+// Cookies are supplied per source (see sources.js). sanitizeCookies() is
+// imported from sources.js and normalizes the browser-DevTools / Puppeteer
+// cookie shape. The legacy cookies.json path is handled by listSources().
 
 // ─── Popup Dismissal ──────────────────────────────────────────────────────────
 
@@ -582,8 +573,8 @@ async function createBrowser() {
   return { browser, page };
 }
 
-async function loadInstagram(page) {
-  const cookies = loadCookies();
+async function loadInstagram(page, cookies) {
+  cookies = sanitizeCookies(cookies);
   log(`Loaded ${cookies.length} cookies`);
 
   // Set cookies before navigating
@@ -1246,6 +1237,86 @@ async function processNewPost(browser, page, post, groups) {
   }
 }
 
+// ─── Source ingestion ─────────────────────────────────────────────────────────
+
+// Ingest one Instagram source: launch a dedicated headless browser, log in with
+// that source's cookies, scrape its home feed, and process new posts. The source
+// id/name are stamped on every post so the database records which account a post
+// came from. This is the built-in "instagram" ingester; other source types
+// register their own via sources.js → registerIngester(type, fn).
+async function ingestInstagramSource(source, ctx) {
+  const { state, seenSet, groups } = ctx;
+  log(`── Source "${source.name}" (${source.id}) — launching browser ──`);
+
+  const cookies = sanitizeCookies(source.cookies);
+  if (cookies.length === 0) {
+    log(`Skipping source "${source.name}": no cookies configured`);
+    return { ok: false, reason: 'no cookies', newPosts: 0 };
+  }
+
+  const { browser, page } = await createBrowser();
+  try {
+    await loadInstagram(page, cookies);
+
+    const posts = await scrapeFeed(page);
+    // Stamp the source on every scraped post.
+    for (const p of posts) {
+      p.source_id = source.id;
+      p.source_name = source.name;
+    }
+
+    const newPosts = posts.filter(p => !seenSet.has(p.shortcode));
+    log(`Source "${source.name}": found ${newPosts.length} new post(s) of ${posts.length} scraped`);
+
+    // Sort: group-matched posts first
+    const sortedNew = newPosts.sort((a, b) => {
+      const aMatched = matchGroups(a, groups).length > 0 ? 0 : 1;
+      const bMatched = matchGroups(b, groups).length > 0 ? 0 : 1;
+      return aMatched - bMatched;
+    });
+
+    // Cap new posts per run
+    const postsToProcess = sortedNew.slice(0, CONFIG.maxNewPostsPerRun);
+    if (newPosts.length > CONFIG.maxNewPostsPerRun) {
+      log(`Capped at ${CONFIG.maxNewPostsPerRun} (had ${newPosts.length} new)`);
+    }
+
+    const matchedCount = postsToProcess.filter(p => matchGroups(p, groups).length > 0).length;
+    if (matchedCount > 0) {
+      log(`⚡ ${matchedCount} group-matched post(s) in this batch`);
+    }
+
+    // Process each new post (matched first)
+    for (const post of postsToProcess) {
+      try {
+        await processNewPost(browser, page, post, groups);
+        seenSet.add(post.shortcode);
+        state.seenPosts.push({ shortcode: post.shortcode, permalink: post.permalink, seenAt: new Date().toISOString() });
+      } catch (err) {
+        log(`Error processing post ${post.shortcode}: ${err.message}`);
+      }
+    }
+
+    // Add all found posts to seen set + DB (even if not processed) to prevent backlog
+    for (const post of posts) {
+      if (!seenSet.has(post.shortcode)) {
+        seenSet.add(post.shortcode);
+        state.seenPosts.push({ shortcode: post.shortcode, permalink: post.permalink, seenAt: new Date().toISOString() });
+        savePostToDB(post, matchGroups(post, groups), null);
+      }
+    }
+
+    if (posts.length > 0 && posts[0].timestamp) {
+      state.lastPostTime = posts[0].timestamp;
+    }
+
+    log(`Source "${source.name}": ${postsToProcess.length} new post(s) processed`);
+    return { ok: true, newPosts: postsToProcess.length };
+  } finally {
+    try { await browser.close(); } catch {}
+  }
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -1290,82 +1361,38 @@ async function main() {
   // Ensure each group has a Telegram forum topic
   await ensureGroupTopics(groups);
 
-  let browser;
-  try {
-    // Launch browser and load Instagram
-    const { browser: b, page } = await createBrowser();
-    browser = b;
+  // Register the built-in Instagram ingester. Additional source types register
+  // themselves through sources.js → registerIngester(type, fn).
+  registerIngester('instagram', ingestInstagramSource);
 
-    await loadInstagram(page);
+  // Load sources and run each enabled one through its ingester.
+  const sources = listSources();
+  const enabled = sources.filter(s => s.enabled !== false);
+  log(`Sources loaded: ${sources.length} total, ${enabled.length} enabled — ${enabled.map(s => `${s.name}[${s.type}]`).join(', ') || 'none'}`);
 
-    // Scrape feed
-    const posts = await scrapeFeed(page);
+  if (enabled.length === 0) {
+    log('No enabled sources — nothing to do. Configure sources via the /settings page.');
+  }
 
-    // Filter new posts
-    const newPosts = posts.filter(p => !seenSet.has(p.shortcode));
-    log(`Found ${newPosts.length} new post(s)`);
-
-    // Sort: group-matched posts first
-    const sortedNew = newPosts.sort((a, b) => {
-      const aMatched = matchGroups(a, groups).length > 0 ? 0 : 1;
-      const bMatched = matchGroups(b, groups).length > 0 ? 0 : 1;
-      return aMatched - bMatched;
-    });
-
-    // Cap new posts per run
-    const postsToProcess = sortedNew.slice(0, CONFIG.maxNewPostsPerRun);
-    if (newPosts.length > CONFIG.maxNewPostsPerRun) {
-      log(`Capped at ${CONFIG.maxNewPostsPerRun} (had ${newPosts.length} new)`);
+  for (const source of enabled) {
+    const type = source.type || 'instagram';
+    const ingester = getIngester(type);
+    if (!ingester) {
+      log(`Skipping source "${source.name}": no ingester registered for type "${type}"`);
+      continue;
     }
-
-    // Count matched posts for logging
-    const matchedCount = postsToProcess.filter(p => matchGroups(p, groups).length > 0).length;
-    if (matchedCount > 0) {
-      log(`⚡ ${matchedCount} group-matched post(s) in this batch`);
-    }
-
-    // Process each new post (matched first)
-    for (const post of postsToProcess) {
-      try {
-        await processNewPost(browser, page, post, groups);
-        // Mark as seen
-        seenSet.add(post.shortcode);
-        state.seenPosts.push({ shortcode: post.shortcode, permalink: post.permalink, seenAt: new Date().toISOString() });
-      } catch (err) {
-        log(`Error processing post ${post.shortcode}: ${err.message}`);
-      }
-    }
-
-    // Add all found posts to seen set + DB (even if not processed) to prevent backlog
-    for (const post of posts) {
-      if (!seenSet.has(post.shortcode)) {
-        seenSet.add(post.shortcode);
-        state.seenPosts.push({ shortcode: post.shortcode, permalink: post.permalink, seenAt: new Date().toISOString() });
-        // Save to DB with basic info (no screenshot for non-processed posts)
-        savePostToDB(post, matchGroups(post, groups), null);
-      }
-    }
-
-    // Update last post time
-    if (posts.length > 0 && posts[0].timestamp) {
-      state.lastPostTime = posts[0].timestamp;
-    }
-
-    state.rateLimitUntil = rateLimitUntil;
-    saveState(state);
-    log(`Run complete. ${postsToProcess.length} new post(s) processed. Total seen: ${state.seenPosts.length}`);
-
-  } catch (err) {
-    log(`FATAL: ${err.message}`);
-    if (CONFIG.debug && err.stack) log(`Stack: ${err.stack}`);
-
-    // Send error alert to Telegram
-    await sendTelegram(`⚠️ <b>IG Watcher Error</b>\n${err.message.slice(0, 200)}`);
-  } finally {
-    if (browser) {
-      try { await browser.close(); } catch {}
+    try {
+      await ingester(source, { state, seenSet, groups });
+    } catch (err) {
+      log(`Source "${source.name}" failed: ${err.message}`);
+      if (CONFIG.debug && err.stack) log(`Stack: ${err.stack}`);
+      await sendTelegram(`⚠️ <b>IG Watcher Error</b> (${source.name})\n${err.message.slice(0, 200)}`);
     }
   }
+
+  state.rateLimitUntil = rateLimitUntil;
+  saveState(state);
+  log(`Run complete. Total seen: ${state.seenPosts.length}`);
 }
 
 main().catch(err => {

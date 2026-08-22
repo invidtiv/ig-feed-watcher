@@ -65,9 +65,11 @@ function readEnvValue(key) {
   return undefined;
 }
 
-// Multi-account mode. When MULTI_ACCOUNTS=1 the frontend exposes the ability to
-// connect more than one Instagram account (the "Add a Source" flow). When the
-// flag is absent the UI is single-account only.
+// Multi-account capability. When MULTI_ACCOUNTS=1 is set in .env.config (or
+// the environment) the API allows connecting more than one Instagram account
+// (POST /api/sources). The web UI is single-account only for now — the
+// multi-account UI ships in a future release — but the backend capability must
+// stay fully functional for API/CLI use.
 const MULTI_ACCOUNTS = readEnvValue('MULTI_ACCOUNTS') === '1';
 
 // ─── Database ─────────────────────────────────────────────────────────────────
@@ -243,6 +245,29 @@ function loadTelegramConfig() {
     botToken: process.env.TG_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN,
     chatId: process.env.TELEGRAM_HOME_CHANNEL || process.env.TG_CHAT_ID,
   };
+}
+
+// Write/update a KEY=VALUE entry in the local .env.config file, preserving
+// comments and unrelated keys. Used by the Telegram settings UI. Empty values
+// are kept as-is (the caller decides whether to omit the key).
+function writeEnvValue(key, value) {
+  const file = join(ROOT, '.env.config');
+  let lines = [];
+  if (existsSync(file)) lines = readFileSync(file, 'utf-8').split(/\r?\n/);
+  const out = [];
+  let replaced = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const m = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (m && m[1] === key) {
+      out.push(`${key}=${value}`);
+      replaced = true;
+    } else {
+      out.push(line);
+    }
+  }
+  if (!replaced) out.push(`${key}=${value}`);
+  writeFileSync(file, out.join('\n'), 'utf-8');
 }
 
 // Map a hex color to the closest Telegram topic icon color
@@ -698,9 +723,9 @@ app.post('/api/sources', (req, res) => {
       return res.status(400).json({ error: 'Source name is required' });
     }
     // Single-account mode (MULTI_ACCOUNTS not set to 1): only one source may
-    // exist. Reject creating additional accounts, matching the frontend.
+    // exist. The API gate stays functional; the web UI is single-account only.
     if (!MULTI_ACCOUNTS && listSources().length > 0) {
-      return res.status(403).json({ error: 'Multi-account mode is disabled — set MULTI_ACCOUNTS=1 in your env file to connect more than one account' });
+      return res.status(403).json({ error: 'Only one account can be connected in this version.' });
     }
     const source = upsertSource({ id, name: name.trim(), type, enabled, cookies });
     res.json({ ok: true, source: sourceToPublic(source) });
@@ -736,6 +761,38 @@ app.put('/api/sources/:id/cookies', (req, res) => {
 app.delete('/api/sources/:id', (req, res) => {
   try {
     if (!deleteSource(req.params.id)) return res.status(404).json({ error: 'Source not found' });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── Telegram settings API ─────────────────────────────────────────────────────
+// The watcher reads TG_BOT_TOKEN / TELEGRAM_HOME_CHANNEL from .env.config on
+// every message, so saving here takes effect without a restart.
+
+// Template placeholders (from .env.example) count as "not configured".
+const TG_PLACEHOLDERS = new Set(['YOUR_BOT_TOKEN_HERE', 'YOUR_CHANNEL_ID_HERE', 'REPLACE_ME']);
+function tgValueSet(v) {
+  return !!(v && v.trim() && !TG_PLACEHOLDERS.has(v.trim()));
+}
+
+app.get('/api/settings/telegram', (req, res) => {
+  try {
+    const tg = loadTelegramConfig();
+    // Never return the full bot token to the browser — only whether it is set.
+    const chatId = tgValueSet(tg.chatId) ? tg.chatId.trim() : '';
+    res.json({ botTokenSet: tgValueSet(tg.botToken), chatId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/settings/telegram', (req, res) => {
+  try {
+    const { botToken, chatId } = req.body || {};
+    if (botToken !== undefined && typeof botToken === 'string' && botToken.trim()) {
+      writeEnvValue('TG_BOT_TOKEN', botToken.trim());
+    }
+    if (chatId !== undefined && typeof chatId === 'string' && chatId.trim()) {
+      writeEnvValue('TELEGRAM_HOME_CHANNEL', chatId.trim());
+    }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1704,39 +1761,27 @@ const SOURCES_PAGE = `<!DOCTYPE html>
   </div>
 </div>
 
-${MULTI_ACCOUNTS ? `
-<div class="section">
-  <h2>Add a Source</h2>
-  <div class="desc">
-    Each <b>source</b> is one place the watcher ingests posts from. An Instagram
-    source gets its own session cookies, so the watcher launches a separate
-    headless browser per account. Other source types can be registered later
-    without changing the watcher core.
-  </div>
-  <div class="new-source-form">
-    <label>Name
-      <input type="text" id="new-source-name" placeholder="e.g. Second Instagram account" onkeydown="if(event.key==='Enter')createSource()">
-    </label>
-    <label>Type
-      <select id="new-source-type">
-        <option value="instagram">instagram</option>
-      </select>
-    </label>
-    <button class="add-btn" onclick="createSource()">+ Add Source</button>
-  </div>
-</div>
-` : `
-<div class="section">
-  <h2>Account</h2>
-  <div class="desc">
-    Single-account mode is active — only one Instagram account can be connected.
-    Set <code>MULTI_ACCOUNTS=1</code> in your environment file to enable
-    connecting more than one account.
-  </div>
-</div>
-`}
-
 <div id="sources-list"></div>
+
+<div class="section" id="telegram-section">
+  <h2>Telegram alerts</h2>
+  <div class="desc">
+    The watcher sends a photo + caption to your Telegram group when a new post
+    appears. Create a bot with <b>@BotFather</b>, add it to your group, then
+    paste the bot token and the group chat ID below (step-by-step in
+    COOKIES-GUIDE.md). Leave a field blank to keep its current value.
+  </div>
+  <div class="field-row">
+    <label>Bot token
+      <input type="password" id="tg-token" autocomplete="off" placeholder="e.g. 123456:ABC-DEF...">
+    </label>
+    <label>Group chat ID
+      <input type="text" id="tg-chat" placeholder="e.g. -1001234567890">
+    </label>
+    <button class="add-btn" onclick="saveTelegram()">💾 Save Telegram settings</button>
+  </div>
+  <div class="hint" id="tg-current"></div>
+</div>
 
 <div class="section">
   <h2>Data API &amp; Contract</h2>
@@ -1753,9 +1798,6 @@ ${MULTI_ACCOUNTS ? `
 
 <script>
 let sources = [];
-// Multi-account mode is resolved server-side from the environment
-// (MULTI_ACCOUNTS=1); the frontend uses it to hide single-account-only UI.
-const MULTI_ACCOUNTS = ${MULTI_ACCOUNTS ? 'true' : 'false'};
 
 async function loadSources() {
   const res = await fetch('/api/sources');
@@ -1767,9 +1809,7 @@ async function loadSources() {
 function renderSources() {
   const el = document.getElementById('sources-list');
   if (sources.length === 0) {
-    const msg = MULTI_ACCOUNTS
-      ? 'No sources yet. Add one above, then paste its cookies.'
-      : 'No Instagram account configured. Follow COOKIES-GUIDE.md (step-by-step instructions) to export your cookies and connect your account.';
+    const msg = 'No Instagram account configured. Follow COOKIES-GUIDE.md (step-by-step instructions) to export your cookies and connect your account.';
     el.innerHTML = '<div class="section"><div class="empty">' + msg + '</div></div>';
     return;
   }
@@ -1799,7 +1839,7 @@ function cardHtml(s) {
       '</div>' +
       '<div class="source-actions">' +
         '<button onclick="saveCookies(\\'' + s.id + '\\')">💾 Save Cookies</button>' +
-        (MULTI_ACCOUNTS ? '<button class="delete-btn" onclick="deleteSource(\\'' + s.id + '\\')">Delete</button>' : '') +
+        '<button class="delete-btn" onclick="deleteSource(\\'' + s.id + '\\')">Delete</button>' +
       '</div>' +
     '</div>' +
     '<div class="field-row">' +
@@ -1814,29 +1854,6 @@ function cardHtml(s) {
       '<div class="hint">Export from your browser DevTools (Application → Cookies → instagram.com) or use <code>python3 export-cookies.py</code>. Critical cookies: <code>sessionid</code>, <code>ds_user_id</code>, <code>csrftoken</code>.</div>' +
     '</div>' +
   '</div>';
-}
-
-async function createSource() {
-  if (!MULTI_ACCOUNTS) {
-    showToast('Multi-account mode is disabled — set MULTI_ACCOUNTS=1 in your env file to add more accounts', true);
-    return;
-  }
-  const name = document.getElementById('new-source-name').value.trim();
-  const type = document.getElementById('new-source-type').value;
-  if (!name) { showToast('Name is required', true); return; }
-  const res = await fetch('/api/sources', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, type, enabled: true, cookies: [] }),
-  });
-  const result = await res.json();
-  if (result.ok) {
-    document.getElementById('new-source-name').value = '';
-    showToast('Source "' + name + '" added');
-    loadSources();
-  } else {
-    showToast('Error: ' + (result.error || 'failed'), true);
-  }
 }
 
 async function updateSource(id) {
@@ -1893,6 +1910,39 @@ async function deleteSource(id) {
   else { showToast('Error: ' + (result.error || 'failed'), true); }
 }
 
+async function loadTelegramSettings() {
+  const res = await fetch('/api/settings/telegram');
+  const data = await res.json();
+  const el = document.getElementById('tg-current');
+  if (data.botTokenSet) {
+    el.textContent = 'Bot token is set. Group chat ID: ' + (data.chatId || '(not set)');
+  } else if (data.chatId) {
+    el.textContent = 'Group chat ID is set. Bot token missing — add it above to enable alerts.';
+  } else {
+    el.textContent = 'Bot token and group chat ID not set yet — the watcher will not send Telegram alerts until you save them here.';
+  }
+}
+
+async function saveTelegram() {
+  const botToken = document.getElementById('tg-token').value.trim();
+  const chatId = document.getElementById('tg-chat').value.trim();
+  if (!botToken && !chatId) { showToast('Enter a bot token and/or a group chat ID', true); return; }
+  const res = await fetch('/api/settings/telegram', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ botToken, chatId }),
+  });
+  const result = await res.json();
+  if (result.ok) {
+    document.getElementById('tg-token').value = '';
+    document.getElementById('tg-chat').value = '';
+    showToast('Telegram settings saved');
+    loadTelegramSettings();
+  } else {
+    showToast('Error: ' + (result.error || 'failed'), true);
+  }
+}
+
 function showToast(msg, isError) {
   const toast = document.getElementById('toast');
   toast.textContent = msg;
@@ -1907,6 +1957,7 @@ function escapeHtml(str) {
 
 // Init
 loadSources();
+loadTelegramSettings();
 </script>
 </body>
 </html>`;

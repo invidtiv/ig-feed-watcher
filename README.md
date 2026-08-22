@@ -101,18 +101,17 @@ account with its own session cookies. For every enabled source it launches its
 own headless browser and scrapes that account's home feed. Every post is stamped
 with `source_id` / `source_name` so you can tell which account it came from.
 
-**Single-account by default.** The web UI only exposes the ability to connect
-more than one account when `MULTI_ACCOUNTS=1` is set in your env file (e.g.
-`.env.config`). Without that flag the **Sources** page is single-account only:
-the "Add a Source" form and the delete buttons are hidden, and the API rejects
-creating a second source.
+**Single-account by default.** The **Sources** page is single-account only:
+it shows one account's cookies and the Telegram alert settings. Multi-account
+ingestion is supported by the backend (set `MULTI_ACCOUNTS=1` in `.env.config`
+to allow the API to accept more than one account) — the multi-account web UI
+is planned for a future release.
 
 Sources are configured in `sources.json` (see `sources.example.json` for a
 template). You can manage them two ways:
 
-1. **Web settings page** — open the Web Explorer, click **🔑 Sources**, add an
-   account and paste its cookie JSON. This is the easiest way to insert cookie
-   values for a second account.
+1. **Web settings page** — open the Web Explorer, click **🔑 Sources**, paste
+   the account's cookie JSON, and save the Telegram bot token + group chat ID.
 2. **Edit `sources.json` directly** — copy `sources.example.json` to
    `sources.json` and fill in the cookies per source.
 

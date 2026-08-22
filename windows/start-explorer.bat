@@ -1,5 +1,5 @@
 @echo off
-REM IG Feed Watcher — Web Explorer (the app you look at in the browser)
+REM IG Feed Watcher - Web Explorer (the app you look at in the browser)
 REM Keep this window open while you want the web app running.
 setlocal
 title IG Feed Watcher - Web Explorer

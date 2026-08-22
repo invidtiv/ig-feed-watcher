@@ -1,10 +1,10 @@
-# ═══════════════════════════════════════════════════════════════════════════
-#  IG Feed Watcher — register the Windows scheduled task
+# ===========================================================================
+#  IG Feed Watcher - register the Windows scheduled task
 #  Makes Windows run the watcher every 5 minutes automatically,
 #  even after a reboot or logout. No admin rights needed.
 #  Run via install-scheduled-task.bat (or: powershell -ExecutionPolicy Bypass
 #  -File install-scheduled-task.ps1)
-# ═══════════════════════════════════════════════════════════════════════════
+# ===========================================================================
 $ErrorActionPreference = "Stop"
 
 # Root of the project = parent of the windows\ folder this script lives in
@@ -27,10 +27,9 @@ $TaskName = "IG Feed Watcher"
 # Action: run `node watcher.js` once from the project folder
 $Action = New-ScheduledTaskAction -Execute $Node -Argument "watcher.js" -WorkingDirectory $Root
 
-# Trigger: every 5 minutes, forever
+# Trigger: every 5 minutes, forever (no RepetitionDuration = repeat indefinitely)
 $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
-    -RepetitionInterval (New-TimeSpan -Minutes 5) `
-    -RepetitionDuration ([TimeSpan]::MaxValue)
+    -RepetitionInterval (New-TimeSpan -Minutes 5)
 
 # Settings: don't miss runs after the PC was off; restart on failure
 $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 `
@@ -41,7 +40,7 @@ Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger `
     -Force | Out-Null
 
 Write-Host ""
-Write-Host "✅ Scheduled task registered: '$TaskName'" -ForegroundColor Green
+Write-Host "OK Scheduled task registered: '$TaskName'" -ForegroundColor Green
 Write-Host "   Windows will now run the watcher every 5 minutes, automatically."
 Write-Host "   (You can stop it anytime with uninstall-scheduled-task.bat)"
 Write-Host ""

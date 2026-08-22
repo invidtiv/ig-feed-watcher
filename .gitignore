@@ -11,3 +11,7 @@ uploads/
 # DB backups (transient)
 posts.db.bak-*
 *.db.bak-*
+
+# Local npm / Puppeteer caches (used when global cache dirs are unavailable)
+.npm-cache/
+.puppeteer-cache/

@@ -1,5 +1,5 @@
 @echo off
-REM IG Feed Watcher — start everything (web app + watcher)
+REM IG Feed Watcher - start everything (web app + watcher)
 REM Opens two windows: the web app and the watcher. Keep both open.
 setlocal
 cd /d "%~dp0"

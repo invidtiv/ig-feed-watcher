@@ -1,5 +1,5 @@
 @echo off
-REM IG Feed Watcher — install the automatic 5-minute watcher
+REM IG Feed Watcher - install the automatic 5-minute watcher
 REM After this, Windows runs the watcher by itself. No window needs to stay open.
 setlocal
 title IG Feed Watcher - Install automatic watcher

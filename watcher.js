@@ -932,10 +932,23 @@ async function capturePostScreenshot(browser, page, post) {
 //  - .js     → run with the current Node.js executable (works everywhere)
 //  - .cmd/.bat → run via cmd.exe (Windows)
 //  - .sh     → run via bash (Linux/macOS, or Git Bash/WSL on Windows)
+// Windows notes:
+//  • cmd.exe /c strips the outer quotes of its argument, so a path containing
+//    spaces must be double-quoted (""path"") AND passed with
+//    windowsVerbatimArguments:true, otherwise the bare path is split on the
+//    first space (e.g. "C:\My Projects\..." → tries to run "C:\My").
+//  • Node's default spawn quoting (windowsVerbatimArguments:false) handles
+//    spaced arguments for non-cmd executables (node.exe, bash) automatically.
 function hookCommand(hookPath) {
   const ext = hookPath.split('.').pop().toLowerCase();
   if (process.platform === 'win32') {
-    if (ext === 'cmd' || ext === 'bat') return { file: 'cmd.exe', args: ['/d', '/s', '/c', hookPath] };
+    if (ext === 'cmd' || ext === 'bat') {
+      return {
+        file: 'cmd.exe',
+        args: ['/d', '/s', '/c', `""${hookPath}""`],
+        windowsVerbatimArguments: true,
+      };
+    }
     if (ext === 'js') return { file: process.execPath, args: [hookPath] };
     return { file: 'bash', args: [hookPath] }; // needs Git Bash or WSL installed
   }
@@ -950,9 +963,10 @@ async function runHookScript(post) {
   }
 
   return new Promise((resolve) => {
-    const { file, args } = hookCommand(CONFIG.hookScript);
+    const { file, args, windowsVerbatimArguments } = hookCommand(CONFIG.hookScript);
     const child = spawn(file, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsVerbatimArguments,
     });
 
     const postData = JSON.stringify(post, null, 2);

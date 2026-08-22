@@ -36,6 +36,40 @@ const DB_PATH = join(ROOT, 'posts.db');
 const SCREENSHOTS_DIR = join(ROOT, 'screenshots');
 const PORT = process.env.PORT || 4180;
 
+// Parse a simple .env-style file into a dict (KEY=VALUE lines, # comments).
+function parseEnvFile(filePath) {
+  if (!existsSync(filePath)) return null;
+  const content = readFileSync(filePath, 'utf-8');
+  const env = {};
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (match) {
+      let val = match[2];
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      env[match[1]] = val;
+    }
+  }
+  return env;
+}
+
+// Resolve a config value: process env first, then the local .env.config file.
+// Returns undefined when the key is absent (or empty).
+function readEnvValue(key) {
+  if (process.env[key] !== undefined && process.env[key] !== '') return process.env[key];
+  const local = parseEnvFile(join(ROOT, '.env.config'));
+  if (local && local[key] !== undefined && local[key] !== '') return local[key];
+  return undefined;
+}
+
+// Multi-account mode. When MULTI_ACCOUNTS=1 the frontend exposes the ability to
+// connect more than one Instagram account (the "Add a Source" flow). When the
+// flag is absent the UI is single-account only.
+const MULTI_ACCOUNTS = readEnvValue('MULTI_ACCOUNTS') === '1';
+
 // ─── Database ─────────────────────────────────────────────────────────────────
 
 const db = new DatabaseSync(DB_PATH);
@@ -662,6 +696,11 @@ app.post('/api/sources', (req, res) => {
     const { id, name, type, enabled, cookies } = req.body || {};
     if (!name || typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ error: 'Source name is required' });
+    }
+    // Single-account mode (MULTI_ACCOUNTS not set to 1): only one source may
+    // exist. Reject creating additional accounts, matching the frontend.
+    if (!MULTI_ACCOUNTS && listSources().length > 0) {
+      return res.status(403).json({ error: 'Multi-account mode is disabled — set MULTI_ACCOUNTS=1 in your env file to connect more than one account' });
     }
     const source = upsertSource({ id, name: name.trim(), type, enabled, cookies });
     res.json({ ok: true, source: sourceToPublic(source) });
@@ -1665,6 +1704,7 @@ const SOURCES_PAGE = `<!DOCTYPE html>
   </div>
 </div>
 
+${MULTI_ACCOUNTS ? `
 <div class="section">
   <h2>Add a Source</h2>
   <div class="desc">
@@ -1685,6 +1725,16 @@ const SOURCES_PAGE = `<!DOCTYPE html>
     <button class="add-btn" onclick="createSource()">+ Add Source</button>
   </div>
 </div>
+` : `
+<div class="section">
+  <h2>Account</h2>
+  <div class="desc">
+    Single-account mode is active — only one Instagram account can be connected.
+    Set <code>MULTI_ACCOUNTS=1</code> in your environment file to enable
+    connecting more than one account.
+  </div>
+</div>
+`}
 
 <div id="sources-list"></div>
 
@@ -1703,6 +1753,9 @@ const SOURCES_PAGE = `<!DOCTYPE html>
 
 <script>
 let sources = [];
+// Multi-account mode is resolved server-side from the environment
+// (MULTI_ACCOUNTS=1); the frontend uses it to hide single-account-only UI.
+const MULTI_ACCOUNTS = ${MULTI_ACCOUNTS ? 'true' : 'false'};
 
 async function loadSources() {
   const res = await fetch('/api/sources');
@@ -1714,7 +1767,10 @@ async function loadSources() {
 function renderSources() {
   const el = document.getElementById('sources-list');
   if (sources.length === 0) {
-    el.innerHTML = '<div class="section"><div class="empty">No sources yet. Add one above, then paste its cookies.</div></div>';
+    const msg = MULTI_ACCOUNTS
+      ? 'No sources yet. Add one above, then paste its cookies.'
+      : 'No Instagram account configured. Use cookies.json or the setup wizard to connect your account.';
+    el.innerHTML = '<div class="section"><div class="empty">' + msg + '</div></div>';
     return;
   }
   el.innerHTML = sources.map(cardHtml).join('');
@@ -1743,7 +1799,7 @@ function cardHtml(s) {
       '</div>' +
       '<div class="source-actions">' +
         '<button onclick="saveCookies(\\'' + s.id + '\\')">💾 Save Cookies</button>' +
-        '<button class="delete-btn" onclick="deleteSource(\\'' + s.id + '\\')">Delete</button>' +
+        (MULTI_ACCOUNTS ? '<button class="delete-btn" onclick="deleteSource(\\'' + s.id + '\\')">Delete</button>' : '') +
       '</div>' +
     '</div>' +
     '<div class="field-row">' +
@@ -1761,6 +1817,10 @@ function cardHtml(s) {
 }
 
 async function createSource() {
+  if (!MULTI_ACCOUNTS) {
+    showToast('Multi-account mode is disabled — set MULTI_ACCOUNTS=1 in your env file to add more accounts', true);
+    return;
+  }
   const name = document.getElementById('new-source-name').value.trim();
   const type = document.getElementById('new-source-type').value;
   if (!name) { showToast('Name is required', true); return; }

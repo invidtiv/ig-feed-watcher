@@ -143,7 +143,8 @@
         },
         "responses": {
           "200": { "description": "The created source (masked)." },
-          "400": { "description": "Source name is required." }
+          "400": { "description": "Source name is required." },
+          "403": { "description": "Multi-account mode disabled (MULTI_ACCOUNTS not set to 1) and a source already exists." }
         }
       }
     },

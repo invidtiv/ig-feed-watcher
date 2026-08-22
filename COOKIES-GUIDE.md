@@ -117,8 +117,9 @@ You should now have three (or six) lines in Notepad:
 
 ## 4. Put the values into the system (Windows)
 
-The system reads cookies from `sources.json` (multi-account, preferred) and,
-only if `sources.json` is missing, from the legacy `cookies.json`. **Use
+The system reads cookies from `sources.json` (the active config, a single
+source named `ig-primary`) and, only if `sources.json` is missing, from the
+legacy `cookies.json`. **Use
 Option A** below — it is the safest on Windows because it writes the file in
 the exact encoding Node needs (UTF-8 **without** BOM).
 

@@ -1761,6 +1761,27 @@ const SOURCES_PAGE = `<!DOCTYPE html>
   </div>
 </div>
 
+<div class="section" id="account-section">
+  <h2>Instagram account</h2>
+  <div class="desc" id="account-desc">
+    Paste your Instagram cookies below to connect the account the watcher reads
+    the feed from. Export them from your browser DevTools
+    (Application → Cookies → instagram.com) — step-by-step instructions are in
+    COOKIES-GUIDE.md. The cookies update the account immediately.
+  </div>
+  <div class="field-row">
+    <label>Account name
+      <input type="text" id="acct-name" placeholder="e.g. My Instagram">
+    </label>
+  </div>
+  <div class="cookies-box">
+    <h3>Cookies (JSON array)</h3>
+    <textarea class="cookies-json" id="acct-cookies" placeholder='Paste cookies as a JSON array here, e.g. [{"name":"sessionid","value":"...","domain":".instagram.com"}]. Critical cookies: sessionid, ds_user_id, csrftoken.'></textarea>
+    <div class="hint">Saving replaces ALL cookies for the account.</div>
+  </div>
+  <button class="add-btn" onclick="saveAccount()" id="acct-save-btn">💾 Add account</button>
+</div>
+
 <div id="sources-list"></div>
 
 <div class="section" id="telegram-section">
@@ -1808,11 +1829,17 @@ async function loadSources() {
 
 function renderSources() {
   const el = document.getElementById('sources-list');
+  const btn = document.getElementById('acct-save-btn');
+  const desc = document.getElementById('account-desc');
   if (sources.length === 0) {
-    const msg = 'No Instagram account configured. Follow COOKIES-GUIDE.md (step-by-step instructions) to export your cookies and connect your account.';
-    el.innerHTML = '<div class="section"><div class="empty">' + msg + '</div></div>';
+    el.innerHTML = '';
+    btn.textContent = '💾 Add account';
+    desc.textContent = 'Paste your Instagram cookies below to connect the account the watcher reads the feed from. Export them from your browser DevTools (Application → Cookies → instagram.com) — step-by-step instructions are in COOKIES-GUIDE.md.';
     return;
   }
+  btn.textContent = '💾 Save account';
+  desc.textContent = 'This is the account the watcher reads the feed from. Paste cookies below to replace the ones currently stored for "' + escapeHtml(sources[0].name) + '" — or edit the account card below. Export cookies from your browser DevTools (Application → Cookies → instagram.com).';
+  document.getElementById('acct-name').value = sources[0].name;
   el.innerHTML = sources.map(cardHtml).join('');
   // Populate dynamic fields via DOM (avoids escaping issues).
   for (const s of sources) {
@@ -1823,6 +1850,67 @@ function renderSources() {
       const ok = (n === 'sessionid') ? ' ok' : '';
       return '<span class="cookie-chip' + ok + '">' + escapeHtml(n) + '</span>';
     }).join('') || '<span class="empty">No cookies configured</span>';
+  }
+}
+
+// Create the first account (no sources yet) or replace the cookies of the
+// existing single account. The API still supports multi-account creation for
+// future use; this UI manages the one connected account.
+async function saveAccount() {
+  const name = document.getElementById('acct-name').value.trim();
+  const raw = document.getElementById('acct-cookies').value.trim();
+  if (!raw) { showToast('Paste cookies JSON first', true); return; }
+  let cookies;
+  try {
+    cookies = JSON.parse(raw);
+  } catch (e) {
+    showToast('Invalid JSON: ' + e.message, true);
+    return;
+  }
+  if (!Array.isArray(cookies) && cookies && Array.isArray(cookies.cookies)) {
+    cookies = cookies.cookies;
+  }
+  if (!Array.isArray(cookies)) { showToast('Cookies must be a JSON array', true); return; }
+
+  if (sources.length === 0) {
+    const res = await fetch('/api/sources', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name || 'Primary Instagram', type: 'instagram', enabled: true, cookies }),
+    });
+    const result = await res.json();
+    if (result.ok) {
+      document.getElementById('acct-cookies').value = '';
+      showToast('Account connected');
+      loadSources();
+    } else {
+      showToast('Error: ' + (result.error || 'failed'), true);
+    }
+    return;
+  }
+
+  // Update the existing (first) account: cookies always, name if changed.
+  const s = sources[0];
+  const tasks = [];
+  if (name && name !== s.name) {
+    tasks.push(fetch('/api/sources/' + s.id, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }));
+  }
+  tasks.push(fetch('/api/sources/' + s.id + '/cookies', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cookies }),
+  }));
+  const results = await Promise.all(tasks);
+  if (results.every(r => r.ok)) {
+    document.getElementById('acct-cookies').value = '';
+    showToast('Account updated');
+    loadSources();
+  } else {
+    showToast('Error: ' + (results.find(r => !r.ok) ? 'failed to update account' : 'unknown'), true);
   }
 }
 

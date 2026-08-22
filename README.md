@@ -94,6 +94,12 @@ account with its own session cookies. For every enabled source it launches its
 own headless browser and scrapes that account's home feed. Every post is stamped
 with `source_id` / `source_name` so you can tell which account it came from.
 
+**Single-account by default.** The web UI only exposes the ability to connect
+more than one account when `MULTI_ACCOUNTS=1` is set in your env file (e.g.
+`.env.config`). Without that flag the **Sources** page is single-account only:
+the "Add a Source" form and the delete buttons are hidden, and the API rejects
+creating a second source.
+
 Sources are configured in `sources.json` (see `sources.example.json` for a
 template). You can manage them two ways:
 
@@ -171,16 +177,11 @@ npm install
 
 You need to provide your Instagram session cookies.
 
-**Recommended:** run the interactive wizard — it walks you through the export
-step by step, captures the cookies into `sources.json` (hidden entry for
-`sessionid`), and writes the how-to guide:
-
-```bash
-./get-ig-cookies.sh
-```
-
-Full written instructions: [`COOKIES-GUIDE.md`](COOKIES-GUIDE.md). Three manual
-options:
+**Recommended:** follow the step-by-step guide
+[`COOKIES-GUIDE.md`](COOKIES-GUIDE.md) (written for Windows) — it walks you
+through getting every value the system needs from your browser, storing them
+in `sources.json`, and verifying them, including a copy-paste PowerShell
+helper. Three manual options:
 
 #### Option A — Manual export from browser DevTools (easiest for headless server)
 
@@ -277,6 +278,7 @@ ig-feed-watcher/
 ├── login.js            — interactive login helper (needs display)
 ├── export-cookies.py   — extract cookies from local Chrome profile
 ├── cookies.json        — your Instagram session cookies (you create this)
+├── COOKIES-GUIDE.md    — step-by-step guide: how to get every value the system needs (Windows)
 ├── state.json          — tracks seen posts (auto-created)
 ├── hooks/
 │   └── on-new-post.sh  — custom hook script (edit this!)

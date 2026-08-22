@@ -8,9 +8,11 @@ WORKDIR /app
 # irrelevant for this container.
 RUN npm install --omit=dev --no-audit --no-fund express@^4.22.2
 
-# Copy app files (runtime data — posts.db, screenshots, groups.json —
-# is provided by bind mounts from docker-compose.yml)
+# Copy app files (runtime data — posts.db, screenshots, groups.json,
+# sources.json — is provided by bind mounts from docker-compose.yml)
 COPY server.js ./
+COPY sources.js ./
+COPY api/openapi.json ./api/openapi.json
 
 EXPOSE 4180
 

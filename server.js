@@ -17,9 +17,18 @@
 import express from 'express';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname, join, basename } from 'path';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
+import {
+  listSources,
+  getSource,
+  upsertSource,
+  deleteSource,
+  setSourceCookies,
+  sourceToPublic,
+  listIngesterTypes,
+} from './sources.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -43,11 +52,15 @@ db.exec(`
     image_urls    TEXT,
     screenshot_path TEXT,
     scraped_at    TEXT,
-    seen_at       TEXT DEFAULT (datetime('now'))
+    seen_at       TEXT DEFAULT (datetime('now')),
+    matched_groups TEXT DEFAULT '[]',
+    source_id     TEXT DEFAULT '',
+    source_name   TEXT DEFAULT ''
   );
   CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author);
   CREATE INDEX IF NOT EXISTS idx_posts_priority ON posts(is_priority);
   CREATE INDEX IF NOT EXISTS idx_posts_timestamp ON posts(timestamp);
+  CREATE INDEX IF NOT EXISTS idx_posts_source ON posts(source_id);
   CREATE TABLE IF NOT EXISTS comments (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     shortcode     TEXT NOT NULL,
@@ -61,8 +74,11 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_comments_shortcode ON comments(shortcode);
   CREATE INDEX IF NOT EXISTS idx_comments_author ON comments(author);
 `);
-// Migration: add matched_groups to pre-existing databases
+// Migrations: add columns introduced after the initial schema to pre-existing
+// databases. Each is best-effort (throws if the column already exists).
 try { db.exec("ALTER TABLE posts ADD COLUMN matched_groups TEXT DEFAULT '[]'"); } catch {}
+try { db.exec("ALTER TABLE posts ADD COLUMN source_id TEXT DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE posts ADD COLUMN source_name TEXT DEFAULT ''"); } catch {}
 
 // ─── Fuzzy Match ─────────────────────────────────────────────────────────────
 
@@ -242,6 +258,90 @@ async function createTelegramTopic(name, colorHex) {
   }
 }
 
+// ─── Post serialization (the data contract) ───────────────────────────────────
+
+function safeJsonArray(value) {
+  try { const v = JSON.parse(value || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+
+// Normalize a raw `posts` row into the public Post shape. This is the single
+// source of truth for how a post is represented on the wire (see api/openapi.json).
+function decoratePost(row, commentCountStmt) {
+  return {
+    ...row,
+    priority_reasons: safeJsonArray(row.priority_reasons),
+    image_urls: safeJsonArray(row.image_urls),
+    matched_groups: safeJsonArray(row.matched_groups),
+    screenshot_url: row.screenshot_path
+      ? `/screenshots/${basename(row.screenshot_path)}`
+      : null,
+    comment_count: commentCountStmt ? commentCountStmt.get(row.shortcode).count : 0,
+    source_id: row.source_id || '',
+    source_name: row.source_name || '',
+  };
+}
+
+// Resolve a post's screenshot to an absolute path on disk (or null).
+function resolveScreenshotPath(row) {
+  if (!row || !row.screenshot_path) return null;
+  for (const c of [row.screenshot_path, join(SCREENSHOTS_DIR, basename(row.screenshot_path))]) {
+    if (c && existsSync(c)) return c;
+  }
+  return null;
+}
+
+function imageContentType(filePath) {
+  const ext = (filePath.split('.').pop() || '').toLowerCase();
+  if (ext === 'png') return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'gif') return 'image/gif';
+  return 'image/jpeg';
+}
+
+// Query the posts table with the shared filter set and return
+// { posts, total, limit, offset }. Used by /api/posts, /api/feeds,
+// /api/groups/:id/feeds, and /api/export so they all share one contract.
+function queryPosts(query, opts = {}) {
+  const {
+    priority, author, search, reel, group, source,
+    date_from, date_to,
+    sort = 'seen_at', order = 'DESC',
+    limit = 50, offset = 0,
+  } = query;
+
+  let sql = 'SELECT * FROM posts WHERE 1=1';
+  const params = {};
+
+  if (priority === '1') { sql += ' AND is_priority = 1'; }
+  if (group) { sql += ' AND matched_groups LIKE @group'; params.group = `%"id":"${group}"%`; }
+  if (source) { sql += ' AND source_id = @source'; params.source = source; }
+  if (author) { sql += ' AND fuzzy_match(author, @author) = 1'; params.author = author; }
+  if (search) { sql += ' AND fuzzy_match(caption, @search) = 1'; params.search = search; }
+  if (reel === '1') { sql += ' AND is_reel = 1'; }
+  if (reel === '0') { sql += ' AND is_reel = 0'; }
+  if (date_from) { sql += ' AND timestamp >= @date_from'; params.date_from = date_from; }
+  if (date_to) { sql += ' AND timestamp <= @date_to'; params.date_to = date_to; }
+
+  const validSorts = ['seen_at', 'timestamp', 'author', 'shortcode', 'is_priority'];
+  const sortCol = validSorts.includes(sort) ? sort : 'seen_at';
+  const sortDir = String(order).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+  sql += ` ORDER BY ${sortCol} ${sortDir}`;
+
+  const maxLimit = opts.maxLimit || 500;
+  const numLimit = Math.min(parseInt(limit) || 50, maxLimit);
+  const numOffset = Math.max(parseInt(offset) || 0, 0);
+  sql += ` LIMIT ${numLimit} OFFSET ${numOffset}`;
+
+  const rows = db.prepare(sql).all(params);
+  const countStmt = db.prepare(sql.replace(/SELECT \* FROM/, 'SELECT COUNT(*) as count FROM').split(' ORDER BY')[0]);
+  const total = countStmt.get(params).count;
+
+  const commentCountStmt = db.prepare('SELECT COUNT(*) as count FROM comments WHERE shortcode = ?');
+  const posts = rows.map(row => decoratePost(row, commentCountStmt));
+
+  return { posts, total, limit: numLimit, offset: numOffset };
+}
+
 // ─── Express App ──────────────────────────────────────────────────────────────
 
 const app = express();
@@ -293,57 +393,10 @@ app.get('/api/stats', (req, res) => {
   }
 });
 
-// Posts listing with filters
+// Posts listing with filters (backward-compatible alias of /api/feeds)
 app.get('/api/posts', (req, res) => {
   try {
-    const {
-      priority, author, search, reel, group,
-      date_from, date_to,
-      sort = 'seen_at', order = 'DESC',
-      limit = 50, offset = 0,
-    } = req.query;
-
-    let sql = 'SELECT * FROM posts WHERE 1=1';
-    const params = {};
-
-    if (priority === '1') { sql += ' AND is_priority = 1'; }
-    if (group) { sql += ' AND matched_groups LIKE @group'; params.group = `%"id":"${group}"%`; }
-    if (author) { sql += ' AND fuzzy_match(author, @author) = 1'; params.author = author; }
-    if (search) { sql += ' AND fuzzy_match(caption, @search) = 1'; params.search = search; }
-    if (reel === '1') { sql += ' AND is_reel = 1'; }
-    if (reel === '0') { sql += ' AND is_reel = 0'; }
-    if (date_from) { sql += ' AND timestamp >= @date_from'; params.date_from = date_from; }
-    if (date_to) { sql += ' AND timestamp <= @date_to'; params.date_to = date_to; }
-
-    // Safe sort
-    const validSorts = ['seen_at', 'timestamp', 'author', 'shortcode', 'is_priority'];
-    const sortCol = validSorts.includes(sort) ? sort : 'seen_at';
-    const sortDir = order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
-    sql += ` ORDER BY ${sortCol} ${sortDir}`;
-
-    const numLimit = Math.min(parseInt(limit) || 50, 500);
-    const numOffset = parseInt(offset) || 0;
-    sql += ` LIMIT ${numLimit} OFFSET ${numOffset}`;
-
-    const stmt = db.prepare(sql);
-    const rows = stmt.all(params);
-    const countStmt = db.prepare(sql.replace(/SELECT \* FROM/, 'SELECT COUNT(*) as count FROM').split(' ORDER BY')[0]);
-    const total = countStmt.get(params).count;
-
-    // Parse JSON fields + attach comment counts
-    const commentCountStmt = db.prepare('SELECT COUNT(*) as count FROM comments WHERE shortcode = ?');
-    const posts = rows.map(row => ({
-      ...row,
-      priority_reasons: JSON.parse(row.priority_reasons || '[]'),
-      image_urls: JSON.parse(row.image_urls || '[]'),
-      matched_groups: JSON.parse(row.matched_groups || '[]'),
-      screenshot_url: row.screenshot_path
-        ? `/screenshots/${row.screenshot_path.split('/').pop()}`
-        : null,
-      comment_count: commentCountStmt.get(row.shortcode).count,
-    }));
-
-    res.json({ posts, total, limit: numLimit, offset: numOffset });
+    res.json(queryPosts(req.query));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -368,7 +421,7 @@ app.get('/api/authors', (req, res) => {
   }
 });
 
-// Single post detail (includes comments)
+// Single post detail (includes comments + image reference)
 app.get('/api/posts/:shortcode', (req, res) => {
   try {
     const row = db.prepare('SELECT * FROM posts WHERE shortcode = ?').get(req.params.shortcode);
@@ -376,17 +429,30 @@ app.get('/api/posts/:shortcode', (req, res) => {
     const comments = db.prepare(
       'SELECT author, text, timestamp, like_count, scraped_at FROM comments WHERE shortcode = ? ORDER BY like_count DESC, timestamp ASC'
     ).all(req.params.shortcode);
+    const imagePath = resolveScreenshotPath(row);
     res.json({
-      ...row,
-      priority_reasons: JSON.parse(row.priority_reasons || '[]'),
-      matched_groups: JSON.parse(row.matched_groups || '[]'),
-      image_urls: JSON.parse(row.image_urls || '[]'),
-      screenshot_url: row.screenshot_path
-        ? `/screenshots/${row.screenshot_path.split('/').pop()}`
+      ...decoratePost(row, null),
+      image: imagePath
+        ? { url: `/api/posts/${row.shortcode}/image`, filename: basename(imagePath), contentType: imageContentType(imagePath) }
         : null,
       comments,
       comment_count: comments.length,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Raw image bytes for a post (the "individual post with the image" contract)
+app.get('/api/posts/:shortcode/image', (req, res) => {
+  try {
+    const row = db.prepare('SELECT * FROM posts WHERE shortcode = ?').get(req.params.shortcode);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    const imagePath = resolveScreenshotPath(row);
+    if (!imagePath) return res.status(404).json({ error: 'No image available for this post' });
+    res.setHeader('Content-Type', imageContentType(imagePath));
+    res.setHeader('Content-Disposition', `inline; filename="${basename(imagePath)}"`);
+    res.send(readFileSync(imagePath));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -581,6 +647,146 @@ app.post('/api/groups/:id/remove', (req, res) => {
   }
 });
 
+// ─── Sources API ──────────────────────────────────────────────────────────────
+
+app.get('/api/sources', (req, res) => {
+  try {
+    const sources = listSources();
+    res.json({ sources: sources.map(sourceToPublic), ingesterTypes: listIngesterTypes() });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/sources', (req, res) => {
+  try {
+    const { id, name, type, enabled, cookies } = req.body || {};
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Source name is required' });
+    }
+    const source = upsertSource({ id, name: name.trim(), type, enabled, cookies });
+    res.json({ ok: true, source: sourceToPublic(source) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/sources/:id', (req, res) => {
+  try {
+    const existing = getSource(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Source not found' });
+    const { name, type, enabled, cookies } = req.body || {};
+    const patch = { id: req.params.id };
+    if (name !== undefined) patch.name = name;
+    if (type !== undefined) patch.type = type;
+    if (enabled !== undefined) patch.enabled = enabled;
+    if (cookies !== undefined) patch.cookies = cookies;
+    const source = upsertSource(patch);
+    res.json({ ok: true, source: sourceToPublic(source) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Insert/replace cookie values for a source (the settings-page flow)
+app.put('/api/sources/:id/cookies', (req, res) => {
+  try {
+    const { cookies } = req.body || {};
+    if (!Array.isArray(cookies)) return res.status(400).json({ error: '"cookies" must be an array' });
+    const source = setSourceCookies(req.params.id, cookies);
+    if (!source) return res.status(404).json({ error: 'Source not found' });
+    res.json({ ok: true, source: sourceToPublic(source) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/sources/:id', (req, res) => {
+  try {
+    if (!deleteSource(req.params.id)) return res.status(404).json({ error: 'Source not found' });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── Feeds API (the data contract) ────────────────────────────────────────────
+
+// All feeds, with optional filters (source, group, author, search, reel, dates)
+app.get('/api/feeds', (req, res) => {
+  try {
+    res.json(queryPosts(req.query));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Feeds for a single group
+app.get('/api/groups/:id/feeds', (req, res) => {
+  try {
+    const groups = loadGroups();
+    if (!groups.some(g => g.id === req.params.id)) {
+      return res.status(404).json({ error: 'Group not found' });
+    }
+    res.json(queryPosts({ ...req.query, group: req.params.id }));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Single feed/post with image reference
+app.get('/api/feeds/:shortcode', (req, res) => {
+  try {
+    const row = db.prepare('SELECT * FROM posts WHERE shortcode = ?').get(req.params.shortcode);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    const imagePath = resolveScreenshotPath(row);
+    res.json({
+      ...decoratePost(row, null),
+      image: imagePath
+        ? { url: `/api/feeds/${row.shortcode}/image`, filename: basename(imagePath), contentType: imageContentType(imagePath) }
+        : null,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Raw image bytes for a feed post
+app.get('/api/feeds/:shortcode/image', (req, res) => {
+  try {
+    const row = db.prepare('SELECT * FROM posts WHERE shortcode = ?').get(req.params.shortcode);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    const imagePath = resolveScreenshotPath(row);
+    if (!imagePath) return res.status(404).json({ error: 'No image available for this post' });
+    res.setHeader('Content-Type', imageContentType(imagePath));
+    res.setHeader('Content-Disposition', `inline; filename="${basename(imagePath)}"`);
+    res.send(readFileSync(imagePath));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── Export ───────────────────────────────────────────────────────────────────
+
+app.get('/api/export', (req, res) => {
+  try {
+    const result = queryPosts(
+      { ...req.query, limit: req.query.limit || 1000000, offset: req.query.offset || 0 },
+      { maxLimit: 1000000 },
+    );
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      total: result.total,
+      count: result.posts.length,
+      posts: result.posts,
+    };
+    if (req.query.download === '1') {
+      res.setHeader('Content-Disposition', 'attachment; filename="feeds-export.json"');
+    }
+    res.json(payload);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── Data contract (OpenAPI) ──────────────────────────────────────────────────
+
+const CONTRACT_FILE = join(ROOT, 'api', 'openapi.json');
+app.get('/api/openapi.json', (req, res) => serveContract(res));
+app.get('/api/contract', (req, res) => serveContract(res));
+
+function serveContract(res) {
+  try {
+    if (existsSync(CONTRACT_FILE)) {
+      res.setHeader('Content-Type', 'application/json');
+      return res.send(readFileSync(CONTRACT_FILE, 'utf-8'));
+    }
+    res.status(404).json({ error: 'OpenAPI contract not found (expected at api/openapi.json)' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 // ─── Frontend ─────────────────────────────────────────────────────────────────
 
 app.get('/', (req, res) => {
@@ -591,6 +797,11 @@ app.get('/', (req, res) => {
 app.get('/settings', (req, res) => {
   res.setHeader('Content-Type', 'text/html');
   res.send(SETTINGS_PAGE);
+});
+
+app.get('/settings/sources', (req, res) => {
+  res.setHeader('Content-Type', 'text/html');
+  res.send(SOURCES_PAGE);
 });
 
 const HTML_PAGE = `<!DOCTYPE html>
@@ -711,6 +922,7 @@ const HTML_PAGE = `<!DOCTYPE html>
     <button id="view-grid" class="active" onclick="switchView('grid')">Grid</button>
     <button id="view-stats" onclick="switchView('stats')">Stats</button>
     <a href="/settings" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:8px 16px;border-radius:8px;font-size:14px;text-decoration:none;display:inline-flex;align-items:center">🏷️ Groups</a>
+    <a href="/settings/sources" style="background:var(--card);border:1px solid var(--border);color:var(--text);padding:8px 16px;border-radius:8px;font-size:14px;text-decoration:none;display:inline-flex;align-items:center">🔑 Sources</a>
   </div>
 </div>
 
@@ -1145,7 +1357,10 @@ const SETTINGS_PAGE = `<!DOCTYPE html>
 
 <div class="header">
   <h1>🏷️ Interest <span>Groups</span></h1>
-  <a href="/" class="back-link">← Back to Explorer</a>
+  <div style="display:flex;gap:16px;align-items:center">
+    <a href="/settings/sources" class="back-link">🔑 Sources &amp; Cookies</a>
+    <a href="/" class="back-link">← Back to Explorer</a>
+  </div>
 </div>
 
 <div class="section">
@@ -1374,6 +1589,263 @@ function escapeHtml(str) {
 
 // Init
 loadGroups();
+</script>
+</body>
+</html>`;
+
+// ─── Sources Settings Page ────────────────────────────────────────────────────
+
+const SOURCES_PAGE = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IG Feed Watcher — Sources &amp; Cookies</title>
+<style>
+  :root {
+    --bg: #0a0a0f; --card: #16161e; --border: #2a2a35;
+    --text: #e4e4e7; --text-dim: #8a8a96; --accent: #6366f1;
+    --accent-hover: #818cf8; --green: #10b981; --red: #ef4444;
+    --radius: 12px;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:20px; }
+  .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; flex-wrap:wrap; gap:12px; }
+  .header h1 { font-size:24px; font-weight:700; }
+  .header h1 span { color:var(--accent); }
+  .back-link { color:var(--text-dim); text-decoration:none; font-size:14px; }
+  .back-link:hover { color:var(--accent); }
+  .section { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:20px; margin-bottom:20px; }
+  .section h2 { font-size:16px; margin-bottom:4px; }
+  .section .desc { font-size:13px; color:var(--text-dim); margin-bottom:16px; line-height:1.5; }
+  code { background:#0d0d13; padding:2px 6px; border-radius:4px; font-size:12px; color:#c4b5fd; }
+  .new-source-form { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+  .new-source-form label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--text-dim); }
+  .new-source-form input, .new-source-form select { background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px 12px; border-radius:8px; font-size:14px; }
+  .new-source-form input:focus, .new-source-form select:focus { outline:none; border-color:var(--accent); }
+  .add-btn { background:var(--accent); color:white; border:none; padding:8px 16px; border-radius:8px; cursor:pointer; font-size:14px; white-space:nowrap; }
+  .add-btn:hover { background:var(--accent-hover); }
+
+  .source-card { background:var(--card); border:1px solid var(--border); border-left:4px solid var(--accent); border-radius:var(--radius); padding:20px; margin-bottom:16px; }
+  .source-card.disabled { border-left-color:#555; opacity:0.8; }
+  .source-header { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  .source-title { display:flex; align-items:center; gap:10px; font-size:18px; font-weight:600; }
+  .type-badge { font-size:11px; background:#0d0d13; border:1px solid var(--border); padding:2px 8px; border-radius:20px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; }
+  .status-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  .source-actions { display:flex; gap:8px; }
+  .source-actions button { background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 12px; border-radius:8px; cursor:pointer; font-size:13px; }
+  .source-actions button:hover { border-color:var(--accent); }
+  .source-actions button.delete-btn:hover { border-color:var(--red); color:var(--red); }
+  .field-row { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px; align-items:flex-end; }
+  .field-row label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--text-dim); }
+  .field-row input, .field-row select { background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px 12px; border-radius:8px; font-size:14px; }
+  .cookies-box h3 { font-size:13px; text-transform:uppercase; color:var(--text-dim); margin-bottom:8px; letter-spacing:0.5px; }
+  .cookie-chip { display:inline-block; background:var(--bg); border:1px solid var(--border); padding:4px 10px; border-radius:20px; font-size:12px; margin:0 6px 6px 0; }
+  .cookie-chip.ok { border-color:#10b98155; color:var(--green); }
+  textarea.cookies-json { width:100%; min-height:140px; background:#0d0d13; border:1px solid var(--border); color:var(--text); padding:10px; border-radius:8px; font-family:monospace; font-size:12px; resize:vertical; }
+  textarea.cookies-json:focus { outline:none; border-color:var(--accent); }
+  .hint { font-size:12px; color:var(--text-dim); margin-top:6px; line-height:1.5; }
+  .toast { position:fixed; bottom:20px; right:20px; background:var(--green); color:white; padding:12px 20px; border-radius:8px; font-size:14px; opacity:0; transition:opacity 0.3s; pointer-events:none; }
+  .toast.show { opacity:1; }
+  .toast.error { background:var(--red); }
+  .api-links { display:flex; flex-wrap:wrap; gap:8px; }
+  .api-links a { background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 12px; border-radius:8px; text-decoration:none; font-size:13px; }
+  .api-links a:hover { border-color:var(--accent); }
+  .empty { color:var(--text-dim); font-size:13px; font-style:italic; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🔑 Sources <span>&amp; Cookies</span></h1>
+  <div style="display:flex;gap:16px;align-items:center">
+    <a href="/settings" class="back-link">🏷️ Groups</a>
+    <a href="/" class="back-link">← Back to Explorer</a>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Add a Source</h2>
+  <div class="desc">
+    Each <b>source</b> is one place the watcher ingests posts from. An Instagram
+    source gets its own session cookies, so the watcher launches a separate
+    headless browser per account. Other source types can be registered later
+    without changing the watcher core.
+  </div>
+  <div class="new-source-form">
+    <label>Name
+      <input type="text" id="new-source-name" placeholder="e.g. Second Instagram account" onkeydown="if(event.key==='Enter')createSource()">
+    </label>
+    <label>Type
+      <select id="new-source-type">
+        <option value="instagram">instagram</option>
+      </select>
+    </label>
+    <button class="add-btn" onclick="createSource()">+ Add Source</button>
+  </div>
+</div>
+
+<div id="sources-list"></div>
+
+<div class="section">
+  <h2>Data API &amp; Contract</h2>
+  <div class="desc">Programmatic access to the feed database. The full OpenAPI contract is served at <code>/api/contract</code>.</div>
+  <div class="api-links">
+    <a href="/api/feeds" target="_blank">/api/feeds</a>
+    <a href="/api/groups" target="_blank">/api/groups</a>
+    <a href="/api/export" target="_blank">/api/export</a>
+    <a href="/api/contract" target="_blank">/api/contract (OpenAPI)</a>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let sources = [];
+
+async function loadSources() {
+  const res = await fetch('/api/sources');
+  const data = await res.json();
+  sources = data.sources || [];
+  renderSources();
+}
+
+function renderSources() {
+  const el = document.getElementById('sources-list');
+  if (sources.length === 0) {
+    el.innerHTML = '<div class="section"><div class="empty">No sources yet. Add one above, then paste its cookies.</div></div>';
+    return;
+  }
+  el.innerHTML = sources.map(cardHtml).join('');
+  // Populate dynamic fields via DOM (avoids escaping issues).
+  for (const s of sources) {
+    document.getElementById('src-name-' + s.id).value = s.name;
+    document.getElementById('src-enabled-' + s.id).checked = !!s.enabled;
+    const chips = document.getElementById('src-cookies-' + s.id);
+    chips.innerHTML = (s.cookieNames || []).map(function (n) {
+      const ok = (n === 'sessionid') ? ' ok' : '';
+      return '<span class="cookie-chip' + ok + '">' + escapeHtml(n) + '</span>';
+    }).join('') || '<span class="empty">No cookies configured</span>';
+  }
+}
+
+function cardHtml(s) {
+  const cls = s.enabled ? '' : ' disabled';
+  const dot = s.enabled ? '#10b981' : '#555';
+  const sess = s.hasSessionId ? 'sessionid ✓' : 'no sessionid';
+  return '<div class="source-card' + cls + '" id="card-' + s.id + '">' +
+    '<div class="source-header">' +
+      '<div class="source-title">' +
+        '<span class="status-dot" style="background:' + dot + '"></span>' +
+        '<span>' + escapeHtml(s.name) + '</span>' +
+        '<span class="type-badge">' + escapeHtml(s.type) + '</span>' +
+      '</div>' +
+      '<div class="source-actions">' +
+        '<button onclick="saveCookies(\\'' + s.id + '\\')">💾 Save Cookies</button>' +
+        '<button class="delete-btn" onclick="deleteSource(\\'' + s.id + '\\')">Delete</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="field-row">' +
+      '<label>Name<input type="text" id="src-name-' + s.id + '"></label>' +
+      '<label>Enabled<input type="checkbox" id="src-enabled-' + s.id + '" style="width:20px;height:20px;accent-color:var(--accent)"></label>' +
+      '<button class="add-btn" onclick="updateSource(\\'' + s.id + '\\')">Save Settings</button>' +
+    '</div>' +
+    '<div class="cookies-box">' +
+      '<h3>Cookies — ' + s.cookieCount + ' set (' + sess + ')</h3>' +
+      '<div id="src-cookies-' + s.id + '" style="margin-bottom:8px"></div>' +
+      '<textarea class="cookies-json" id="src-cookie-json-' + s.id + '" placeholder=\\'Paste cookies as a JSON array here, e.g. [{"name":"sessionid","value":"...","domain":".instagram.com"}]. Saving replaces ALL cookies for this source.\\'></textarea>' +
+      '<div class="hint">Export from your browser DevTools (Application → Cookies → instagram.com) or use <code>python3 export-cookies.py</code>. Critical cookies: <code>sessionid</code>, <code>ds_user_id</code>, <code>csrftoken</code>.</div>' +
+    '</div>' +
+  '</div>';
+}
+
+async function createSource() {
+  const name = document.getElementById('new-source-name').value.trim();
+  const type = document.getElementById('new-source-type').value;
+  if (!name) { showToast('Name is required', true); return; }
+  const res = await fetch('/api/sources', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, type, enabled: true, cookies: [] }),
+  });
+  const result = await res.json();
+  if (result.ok) {
+    document.getElementById('new-source-name').value = '';
+    showToast('Source "' + name + '" added');
+    loadSources();
+  } else {
+    showToast('Error: ' + (result.error || 'failed'), true);
+  }
+}
+
+async function updateSource(id) {
+  const name = document.getElementById('src-name-' + id).value.trim();
+  const enabled = document.getElementById('src-enabled-' + id).checked;
+  if (!name) { showToast('Name is required', true); return; }
+  const res = await fetch('/api/sources/' + id, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, enabled }),
+  });
+  const result = await res.json();
+  if (result.ok) { showToast('Source updated'); loadSources(); }
+  else { showToast('Error: ' + (result.error || 'failed'), true); }
+}
+
+async function saveCookies(id) {
+  const raw = document.getElementById('src-cookie-json-' + id).value.trim();
+  if (!raw) { showToast('Paste cookies JSON first', true); return; }
+  let cookies;
+  try {
+    cookies = JSON.parse(raw);
+  } catch (e) {
+    showToast('Invalid JSON: ' + e.message, true);
+    return;
+  }
+  if (!Array.isArray(cookies) && cookies && Array.isArray(cookies.cookies)) {
+    cookies = cookies.cookies;
+  }
+  if (!Array.isArray(cookies)) { showToast('Cookies must be a JSON array', true); return; }
+
+  const res = await fetch('/api/sources/' + id + '/cookies', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cookies }),
+  });
+  const result = await res.json();
+  if (result.ok) {
+    document.getElementById('src-cookie-json-' + id).value = '';
+    showToast('Cookies saved (' + result.source.cookieCount + ' cookie(s))');
+    loadSources();
+  } else {
+    showToast('Error: ' + (result.error || 'failed'), true);
+  }
+}
+
+async function deleteSource(id) {
+  const s = sources.find(function (x) { return x.id === id; });
+  if (!s) return;
+  if (!confirm('Delete source "' + s.name + '"? Its posts remain in the database.')) return;
+  const res = await fetch('/api/sources/' + id, { method: 'DELETE' });
+  const result = await res.json();
+  if (result.ok) { showToast('Source deleted'); loadSources(); }
+  else { showToast('Error: ' + (result.error || 'failed'), true); }
+}
+
+function showToast(msg, isError) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.className = 'toast show' + (isError ? ' error' : '');
+  setTimeout(function () { toast.className = 'toast'; }, 2500);
+}
+
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// Init
+loadSources();
 </script>
 </body>
 </html>`;

@@ -87,6 +87,78 @@ node poster.js /path/to/image.jpg "Your caption here"
 The API server reads cookies from the same `cookies.json` used by the watcher.
 Port can be changed via `IG_POST_API_PORT` env var.
 
+## Multiple Accounts / Sources
+
+The watcher ingests from one or more **sources**, each a separate Instagram
+account with its own session cookies. For every enabled source it launches its
+own headless browser and scrapes that account's home feed. Every post is stamped
+with `source_id` / `source_name` so you can tell which account it came from.
+
+Sources are configured in `sources.json` (see `sources.example.json` for a
+template). You can manage them two ways:
+
+1. **Web settings page** — open the Web Explorer, click **🔑 Sources**, add an
+   account and paste its cookie JSON. This is the easiest way to insert cookie
+   values for a second account.
+2. **Edit `sources.json` directly** — copy `sources.example.json` to
+   `sources.json` and fill in the cookies per source.
+
+If `sources.json` is absent, the watcher falls back to the legacy single-account
+`cookies.json`. The source `type` field is an extension point: new source types
+(e.g. RSS, an HTTP feed, another network) register an ingester via
+`sources.js` → `registerIngester(type, fn)` and the watcher loop is unchanged.
+
+## Feed Data API & Contract
+
+The Web Explorer (`server.js`, port **4180**) exposes a feed data API plus a
+machine-readable OpenAPI contract. This is the programmatic way to read the
+database of all feeds, per-group feeds, and individual posts with their images.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/feeds` | All feeds (posts), with filters |
+| `GET /api/groups/{id}/feeds` | Feeds for one group |
+| `GET /api/feeds/{shortcode}` | One post + image reference |
+| `GET /api/feeds/{shortcode}/image` | Raw image bytes for a post |
+| `GET /api/export` | Bulk JSON export of post metadata |
+| `GET /api/groups` | Groups with post counts |
+| `GET /api/sources` | Sources (cookie values masked) |
+| `GET /api/contract` | The OpenAPI data contract |
+
+Filters: `group`, `source`, `author`, `search`, `reel`, `date_from`, `date_to`,
+`limit`, `offset`, `sort`, `order`.
+
+```bash
+# All feeds
+curl -s 'http://localhost:4180/api/feeds?limit=20'
+
+# One group's feeds
+curl -s 'http://localhost:4180/api/groups/g_mr7u3k93/feeds'
+
+# One post with its image
+curl -s 'http://localhost:4180/api/feeds/C1b2dEf'
+
+# Raw image
+curl -s 'http://localhost:4180/api/feeds/C1b2dEf/image' -o post.jpg
+
+# Export all metadata as JSON
+curl -s 'http://localhost:4180/api/export' > feeds.json
+
+# The contract
+curl -s 'http://localhost:4180/api/contract'
+```
+
+A dependency-free CLI wraps the same API:
+
+```bash
+node feed-cli.js feeds --group g_mr7u3k93
+node feed-cli.js post C1b2dEf
+node feed-cli.js export --out feeds.json
+node feed-cli.js contract
+```
+
+An agent skill documenting this API lives in `skills/feed-api/SKILL.md`.
+
 ## Feed Watcher Setup
 
 ### 1. Install dependencies
@@ -184,6 +256,11 @@ Example hooks (already in the script, commented out):
 ```
 ig-feed-watcher/
 ├── watcher.js          — main watcher script (Puppeteer + headless Chrome)
+├── sources.js          — multi-source config + ingester registry
+├── sources.json        — your sources (one per account, with cookies)
+├── feed-cli.js         — CLI for the feed data API
+├── api/openapi.json    — OpenAPI data contract
+├── skills/feed-api/    — agent skill for the feed data API
 ├── poster.js           — Instagram posting automation (Puppeteer)
 ├── post-server.js      — HTTP API server (Express + Multer)
 ├── login.js            — interactive login helper (needs display)

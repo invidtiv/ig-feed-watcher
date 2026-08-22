@@ -1,0 +1,74 @@
+{
+  "sources": [
+    {
+      "id": "ig-primary",
+      "name": "Primary Instagram",
+      "type": "instagram",
+      "enabled": true,
+      "cookies": [
+        {
+          "name": "sessionid",
+          "value": "YOUR_SESSION_ID_HERE",
+          "domain": ".instagram.com",
+          "path": "/",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Lax"
+        },
+        {
+          "name": "ds_user_id",
+          "value": "YOUR_DS_USER_ID_HERE",
+          "domain": ".instagram.com",
+          "path": "/",
+          "secure": true,
+          "httpOnly": false,
+          "sameSite": "Lax"
+        },
+        {
+          "name": "csrftoken",
+          "value": "YOUR_CSRF_TOKEN_HERE",
+          "domain": ".instagram.com",
+          "path": "/",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Lax"
+        }
+      ]
+    },
+    {
+      "id": "ig-secondary",
+      "name": "Second Instagram account",
+      "type": "instagram",
+      "enabled": true,
+      "cookies": [
+        {
+          "name": "sessionid",
+          "value": "YOUR_SECOND_SESSION_ID_HERE",
+          "domain": ".instagram.com",
+          "path": "/",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Lax"
+        },
+        {
+          "name": "ds_user_id",
+          "value": "YOUR_SECOND_DS_USER_ID_HERE",
+          "domain": ".instagram.com",
+          "path": "/",
+          "secure": true,
+          "httpOnly": false,
+          "sameSite": "Lax"
+        },
+        {
+          "name": "csrftoken",
+          "value": "YOUR_SECOND_CSRF_TOKEN_HERE",
+          "domain": ".instagram.com",
+          "path": "/",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Lax"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,362 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "IG Feed Watcher — Feed Data API",
+    "version": "1.0.0",
+    "description": "Data contract for the IG Feed Watcher feed database. Provides all feeds, per-group feeds, individual posts with their image, sources/cookies management, and JSON metadata export."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:4180",
+      "description": "Web Explorer server (PORT env overrides the port)"
+    }
+  ],
+  "tags": [
+    { "name": "feeds", "description": "Feed posts stored in the database" },
+    { "name": "groups", "description": "Interest groups and their feeds" },
+    { "name": "sources", "description": "Ingestion sources (accounts) and their cookies" },
+    { "name": "export", "description": "Bulk JSON export of post metadata" }
+  ],
+  "paths": {
+    "/api/feeds": {
+      "get": {
+        "tags": ["feeds"],
+        "summary": "List all feeds (posts)",
+        "description": "Returns all posts across every source, with optional filters. This is the canonical feed listing endpoint; /api/posts is a backward-compatible alias.",
+        "parameters": [
+          { "$ref": "#/components/parameters/limit" },
+          { "$ref": "#/components/parameters/offset" },
+          { "$ref": "#/components/parameters/source" },
+          { "$ref": "#/components/parameters/group" },
+          { "$ref": "#/components/parameters/author" },
+          { "$ref": "#/components/parameters/search" },
+          { "$ref": "#/components/parameters/reel" },
+          { "$ref": "#/components/parameters/date_from" },
+          { "$ref": "#/components/parameters/date_to" },
+          { "$ref": "#/components/parameters/sort" },
+          { "$ref": "#/components/parameters/order" }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of posts.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PostList" } } }
+          }
+        }
+      }
+    },
+    "/api/groups/{id}/feeds": {
+      "get": {
+        "tags": ["groups", "feeds"],
+        "summary": "List feeds for a single group",
+        "parameters": [
+          { "$ref": "#/components/parameters/groupId" },
+          { "$ref": "#/components/parameters/limit" },
+          { "$ref": "#/components/parameters/offset" },
+          { "$ref": "#/components/parameters/source" },
+          { "$ref": "#/components/parameters/author" },
+          { "$ref": "#/components/parameters/search" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Posts matched to the group.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PostList" } } }
+          },
+          "404": { "description": "Group not found." }
+        }
+      }
+    },
+    "/api/feeds/{shortcode}": {
+      "get": {
+        "tags": ["feeds"],
+        "summary": "Get an individual post with its image reference",
+        "parameters": [
+          { "$ref": "#/components/parameters/shortcode" }
+        ],
+        "responses": {
+          "200": {
+            "description": "A single post including an `image` object pointing at the raw image endpoint.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PostDetail" } } }
+          },
+          "404": { "description": "Post not found." }
+        }
+      }
+    },
+    "/api/feeds/{shortcode}/image": {
+      "get": {
+        "tags": ["feeds"],
+        "summary": "Serve the raw image for a post",
+        "parameters": [
+          { "$ref": "#/components/parameters/shortcode" }
+        ],
+        "responses": {
+          "200": {
+            "description": "The image bytes.",
+            "content": {
+              "image/jpeg": { "schema": { "type": "string", "format": "binary" } },
+              "image/png": { "schema": { "type": "string", "format": "binary" } },
+              "image/webp": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "404": { "description": "Post not found, or no image available." }
+        }
+      }
+    },
+    "/api/export": {
+      "get": {
+        "tags": ["export"],
+        "summary": "Export post metadata as JSON",
+        "description": "Returns all (or filtered) posts as a JSON array under `posts`. Add `?download=1` to force a file download.",
+        "parameters": [
+          { "$ref": "#/components/parameters/source" },
+          { "$ref": "#/components/parameters/group" },
+          { "$ref": "#/components/parameters/author" },
+          { "$ref": "#/components/parameters/search" },
+          { "$ref": "#/components/parameters/date_from" },
+          { "$ref": "#/components/parameters/date_to" },
+          { "name": "download", "in": "query", "schema": { "type": "string", "enum": ["1"] }, "description": "Set to 1 to return a Content-Disposition attachment." }
+        ],
+        "responses": {
+          "200": {
+            "description": "Export payload.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Export" } } }
+          }
+        }
+      }
+    },
+    "/api/sources": {
+      "get": {
+        "tags": ["sources"],
+        "summary": "List ingestion sources (cookie values masked)",
+        "responses": {
+          "200": {
+            "description": "Sources plus registered ingester types.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SourceList" } } }
+          }
+        }
+      },
+      "post": {
+        "tags": ["sources"],
+        "summary": "Create a source",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SourceInput" } } }
+        },
+        "responses": {
+          "200": { "description": "The created source (masked)." },
+          "400": { "description": "Source name is required." }
+        }
+      }
+    },
+    "/api/sources/{id}": {
+      "put": {
+        "tags": ["sources"],
+        "summary": "Update a source (name, enabled, type, or cookies)",
+        "parameters": [ { "$ref": "#/components/parameters/sourceId" } ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SourceInput" } } }
+        },
+        "responses": {
+          "200": { "description": "The updated source (masked)." },
+          "404": { "description": "Source not found." }
+        }
+      },
+      "delete": {
+        "tags": ["sources"],
+        "summary": "Delete a source",
+        "parameters": [ { "$ref": "#/components/parameters/sourceId" } ],
+        "responses": {
+          "200": { "description": "Deleted." },
+          "404": { "description": "Source not found." }
+        }
+      }
+    },
+    "/api/sources/{id}/cookies": {
+      "put": {
+        "tags": ["sources"],
+        "summary": "Insert/replace cookie values for a source",
+        "parameters": [ { "$ref": "#/components/parameters/sourceId" } ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["cookies"],
+                "properties": {
+                  "cookies": { "type": "array", "items": { "$ref": "#/components/schemas/Cookie" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Cookies saved (values masked in response)." },
+          "404": { "description": "Source not found." }
+        }
+      }
+    },
+    "/api/groups": {
+      "get": {
+        "tags": ["groups"],
+        "summary": "List interest groups with post counts",
+        "responses": {
+          "200": { "description": "Groups." }
+        }
+      }
+    },
+    "/api/contract": {
+      "get": {
+        "tags": ["feeds"],
+        "summary": "This OpenAPI contract (alias of /api/openapi.json)",
+        "responses": {
+          "200": { "description": "The OpenAPI 3.0 document." }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "shortcode": { "name": "shortcode", "in": "path", "required": true, "schema": { "type": "string" } },
+      "groupId": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Group id." },
+      "sourceId": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Source id." },
+      "limit": { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 500 }, "description": "Page size." },
+      "offset": { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 }, "description": "Page offset." },
+      "source": { "name": "source", "in": "query", "schema": { "type": "string" }, "description": "Filter by source_id." },
+      "group": { "name": "group", "in": "query", "schema": { "type": "string" }, "description": "Filter by group id." },
+      "author": { "name": "author", "in": "query", "schema": { "type": "string" }, "description": "Fuzzy-match author username." },
+      "search": { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Fuzzy-match caption text." },
+      "reel": { "name": "reel", "in": "query", "schema": { "type": "string", "enum": ["0", "1"] }, "description": "Filter photos (0) or reels (1)." },
+      "date_from": { "name": "date_from", "in": "query", "schema": { "type": "string" }, "description": "Posts with timestamp >= this value." },
+      "date_to": { "name": "date_to", "in": "query", "schema": { "type": "string" }, "description": "Posts with timestamp <= this value." },
+      "sort": { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["seen_at", "timestamp", "author", "shortcode", "is_priority"], "default": "seen_at" } },
+      "order": { "name": "order", "in": "query", "schema": { "type": "string", "enum": ["ASC", "DESC"], "default": "DESC" } }
+    },
+    "schemas": {
+      "MatchedGroup": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "color": { "type": ["string", "null"] },
+          "telegramThreadId": { "type": ["integer", "null"] },
+          "reasons": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "Post": {
+        "type": "object",
+        "properties": {
+          "shortcode": { "type": "string", "description": "Instagram shortcode (primary key)." },
+          "permalink": { "type": ["string", "null"] },
+          "author": { "type": "string" },
+          "caption": { "type": "string" },
+          "timestamp": { "type": ["string", "null"] },
+          "is_reel": { "type": "integer", "enum": [0, 1] },
+          "is_priority": { "type": "integer", "enum": [0, 1] },
+          "priority_reasons": { "type": "array", "items": { "type": "string" } },
+          "image_urls": { "type": "array", "items": { "type": "string" } },
+          "screenshot_path": { "type": ["string", "null"] },
+          "screenshot_url": { "type": ["string", "null"], "description": "Relative URL of the screenshot." },
+          "scraped_at": { "type": ["string", "null"] },
+          "seen_at": { "type": ["string", "null"] },
+          "matched_groups": { "type": "array", "items": { "$ref": "#/components/schemas/MatchedGroup" } },
+          "source_id": { "type": "string", "description": "Which source ingested this post." },
+          "source_name": { "type": "string" },
+          "comment_count": { "type": "integer" }
+        }
+      },
+      "Comment": {
+        "type": "object",
+        "properties": {
+          "author": { "type": ["string", "null"] },
+          "text": { "type": "string" },
+          "timestamp": { "type": ["string", "null"] },
+          "like_count": { "type": "integer" },
+          "scraped_at": { "type": ["string", "null"] }
+        }
+      },
+      "ImageRef": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "Relative URL of the raw image." },
+          "filename": { "type": "string" },
+          "contentType": { "type": "string" }
+        }
+      },
+      "PostDetail": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Post" },
+          {
+            "type": "object",
+            "properties": {
+              "image": { "oneOf": [ { "$ref": "#/components/schemas/ImageRef" }, { "type": "null" } ] },
+              "comments": { "type": "array", "items": { "$ref": "#/components/schemas/Comment" } }
+            }
+          }
+        ]
+      },
+      "PostList": {
+        "type": "object",
+        "properties": {
+          "posts": { "type": "array", "items": { "$ref": "#/components/schemas/Post" } },
+          "total": { "type": "integer" },
+          "limit": { "type": "integer" },
+          "offset": { "type": "integer" }
+        }
+      },
+      "Export": {
+        "type": "object",
+        "properties": {
+          "exportedAt": { "type": "string" },
+          "total": { "type": "integer" },
+          "count": { "type": "integer" },
+          "posts": { "type": "array", "items": { "$ref": "#/components/schemas/Post" } }
+        }
+      },
+      "Cookie": {
+        "type": "object",
+        "required": ["name", "value"],
+        "properties": {
+          "name": { "type": "string" },
+          "value": { "type": "string" },
+          "domain": { "type": "string", "default": ".instagram.com" },
+          "path": { "type": "string", "default": "/" },
+          "expires": { "type": "number" },
+          "httpOnly": { "type": "boolean" },
+          "secure": { "type": "boolean" },
+          "sameSite": { "type": "string" }
+        }
+      },
+      "Source": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "type": { "type": "string", "description": "Registered ingester type (e.g. instagram)." },
+          "enabled": { "type": "boolean" },
+          "cookieNames": { "type": "array", "items": { "type": "string" } },
+          "hasSessionId": { "type": "boolean" },
+          "cookieCount": { "type": "integer" },
+          "createdAt": { "type": ["string", "null"] },
+          "updatedAt": { "type": ["string", "null"] }
+        }
+      },
+      "SourceInput": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "type": { "type": "string", "default": "instagram" },
+          "enabled": { "type": "boolean" },
+          "cookies": { "type": "array", "items": { "$ref": "#/components/schemas/Cookie" } }
+        }
+      },
+      "SourceList": {
+        "type": "object",
+        "properties": {
+          "sources": { "type": "array", "items": { "$ref": "#/components/schemas/Source" } },
+          "ingesterTypes": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

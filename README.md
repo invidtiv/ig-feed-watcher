@@ -7,6 +7,13 @@ Headless Instagram feed watcher that detects new posts on your feed and:
 
 Also includes a **Post API** — an HTTP API to post images to Instagram using the same session cookies.
 
+> **🪟 Deploying on Windows?** See
+> [`WINDOWS-DEPLOYMENT.md`](WINDOWS-DEPLOYMENT.md) — three solutions for a
+> Windows machine operated by someone with no IT experience, plus the
+> ready-to-run `windows/` launchers (`install.bat`, `start-*.bat`,
+> scheduled-task scripts). The watcher also supports a self-contained
+> `--loop` mode (`node watcher.js --loop 5`) that needs no cron.
+
 ## Posting API
 
 A lightweight Express server that accepts an image + caption and posts to Instagram via Puppeteer automation.
@@ -285,6 +292,8 @@ ig-feed-watcher/
 ├── screenshots/        — post screenshots
 ├── uploads/            — uploaded images (for posting API)
 ├── logs/               — watcher + poster logs
+├── windows/            — Windows deployment (install.bat, start-*.bat, scheduled task)
+├── WINDOWS-DEPLOYMENT.md — 3 ways to deploy on Windows, step-by-step
 ├── .env.config         — configuration
 └── package.json
 ```

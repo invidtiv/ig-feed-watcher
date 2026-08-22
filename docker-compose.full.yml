@@ -1,0 +1,61 @@
+# IG Feed Watcher — self-contained full stack for Docker Desktop (Windows) or
+# any Docker host. Unlike docker-compose.yml, this one:
+#   • runs ALL three services (watcher, web explorer, posting API)
+#   • does NOT depend on an external nginx-proxy-manager network
+#   • persists runtime data in a named volume next to the project
+#
+# Usage (after installing Docker Desktop):
+#   docker compose -f docker-compose.full.yml up -d
+#
+services:
+  ig-watcher:
+    build:
+      context: .
+      dockerfile: Dockerfile.full
+    container_name: ig-watcher
+    restart: unless-stopped
+    command: ["node", "watcher.js", "--loop", "5"]
+    env_file:
+      - ./.env.config
+    volumes:
+      - ./posts.db:/app/posts.db
+      - ./state.json:/app/state.json
+      - ./screenshots:/app/screenshots
+      - ./groups.json:/app/groups.json
+      - ./sources.json:/app/sources.json
+      - ./priority-list.json:/app/priority-list.json
+      - ./logs:/app/logs
+
+  ig-explorer:
+    build:
+      context: .
+      dockerfile: Dockerfile.full
+    container_name: ig-explorer
+    restart: unless-stopped
+    command: ["node", "server.js"]
+    env_file:
+      - ./.env.config
+    ports:
+      - "4180:4180"
+    volumes:
+      - ./posts.db:/app/posts.db
+      - ./screenshots:/app/screenshots
+      - ./groups.json:/app/groups.json
+      - ./sources.json:/app/sources.json
+      - ./priority-list.json:/app/priority-list.json
+
+  ig-post-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.full
+    container_name: ig-post-api
+    restart: unless-stopped
+    command: ["node", "post-server.js"]
+    env_file:
+      - ./.env.config
+    ports:
+      - "4030:4030"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./cookies.json:/app/cookies.json:ro
+      - ./sources.json:/app/sources.json:ro

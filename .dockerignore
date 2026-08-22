@@ -15,11 +15,6 @@ README.md
 posts.db
 posts.db.bak-*
 uploads
-hooks
-republish-photos.js
-watcher.js
-post-server.js
-poster.js
 docker-compose.yml
 Dockerfile
 *.code-workspace

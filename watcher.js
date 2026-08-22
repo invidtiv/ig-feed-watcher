@@ -30,11 +30,33 @@ const ROOT = __dirname;
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
+// Read a KEY=VALUE from the environment first, then from .env.config.
+// (The .env.config parser below is intentionally shared with Telegram config.)
+function readConfigValue(key) {
+  if (process.env[key] !== undefined && process.env[key] !== '') return process.env[key];
+  try {
+    const file = join(ROOT, '.env.config');
+    if (!existsSync(file)) return undefined;
+    for (const line of readFileSync(file, 'utf-8').split('\n')) {
+      const t = line.trim();
+      if (!t || t.startsWith('#')) continue;
+      const m = t.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (m && m[1] === key) return m[2].replace(/^["']|["']$/g, '');
+    }
+  } catch { /* ignore unreadable config */ }
+  return undefined;
+}
+
+// Default hook script: on Windows prefer the Node.js hook (no bash required);
+// on Linux/macOS keep the original bash hook. Override with HOOK_SCRIPT in
+// .env.config or the environment.
+const DEFAULT_HOOK_FILE = process.platform === 'win32' ? 'on-new-post.js' : 'on-new-post.sh';
+
 const CONFIG = {
   cookiesFile: join(ROOT, 'cookies.json'),
   stateFile: join(ROOT, 'state.json'),
   dbFile: join(ROOT, 'posts.db'),
-  hookScript: join(ROOT, 'hooks', 'on-new-post.sh'),
+  hookScript: readConfigValue('HOOK_SCRIPT') || join(ROOT, 'hooks', DEFAULT_HOOK_FILE),
   screenshotsDir: join(ROOT, 'screenshots'),
   logsDir: join(ROOT, 'logs'),
   priorityListFile: join(ROOT, 'priority-list.json'),
@@ -906,6 +928,21 @@ async function capturePostScreenshot(browser, page, post) {
   return existsSync(screenshotPath) ? screenshotPath : null;
 }
 
+// Resolve how to invoke a hook script on the current platform.
+//  - .js     → run with the current Node.js executable (works everywhere)
+//  - .cmd/.bat → run via cmd.exe (Windows)
+//  - .sh     → run via bash (Linux/macOS, or Git Bash/WSL on Windows)
+function hookCommand(hookPath) {
+  const ext = hookPath.split('.').pop().toLowerCase();
+  if (process.platform === 'win32') {
+    if (ext === 'cmd' || ext === 'bat') return { file: 'cmd.exe', args: ['/d', '/s', '/c', hookPath] };
+    if (ext === 'js') return { file: process.execPath, args: [hookPath] };
+    return { file: 'bash', args: [hookPath] }; // needs Git Bash or WSL installed
+  }
+  if (ext === 'js') return { file: process.execPath, args: [hookPath] };
+  return { file: 'bash', args: [hookPath] };
+}
+
 async function runHookScript(post) {
   if (!existsSync(CONFIG.hookScript)) {
     log(`Hook script not found: ${CONFIG.hookScript} — skipping custom script`);
@@ -913,7 +950,8 @@ async function runHookScript(post) {
   }
 
   return new Promise((resolve) => {
-    const child = spawn('bash', [CONFIG.hookScript], {
+    const { file, args } = hookCommand(CONFIG.hookScript);
+    const child = spawn(file, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -1319,7 +1357,7 @@ async function ingestInstagramSource(source, ctx) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-async function main() {
+async function runOnce() {
   log('═══════════════════════════════════════════');
   log('IG Feed Watcher — starting run');
   log('═══════════════════════════════════════════');
@@ -1393,6 +1431,41 @@ async function main() {
   state.rateLimitUntil = rateLimitUntil;
   saveState(state);
   log(`Run complete. Total seen: ${state.seenPosts.length}`);
+}
+
+// ─── Entry point ──────────────────────────────────────────────────────────────
+//
+// Run modes:
+//   node watcher.js              → one pass, then exit (cron / Task Scheduler)
+//   node watcher.js --loop [n]   → stay alive, run a pass every n minutes
+//                                  (default 5). Self-contained scheduling for
+//                                  Windows and other machines without cron.
+function parseLoopInterval(argv = process.argv) {
+  const idx = argv.indexOf('--loop');
+  if (idx === -1) return 0;
+  const n = parseInt(argv[idx + 1], 10);
+  return Number.isFinite(n) && n > 0 ? n : 5;
+}
+
+const LOOP_MINUTES = parseLoopInterval();
+
+async function main() {
+  if (LOOP_MINUTES > 0) {
+    const intervalMs = LOOP_MINUTES * 60 * 1000;
+    log(`Continuous loop mode: checking every ${LOOP_MINUTES} minute(s). Keep this window open.`);
+    const tick = async () => {
+      try {
+        await runOnce();
+      } catch (err) {
+        log(`Loop run failed: ${err.message}`);
+        if (CONFIG.debug && err.stack) log(`Stack: ${err.stack}`);
+      }
+      setTimeout(tick, intervalMs);
+    };
+    await tick();
+  } else {
+    await runOnce();
+  }
 }
 
 main().catch(err => {

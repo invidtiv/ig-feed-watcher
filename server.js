@@ -1769,7 +1769,7 @@ function renderSources() {
   if (sources.length === 0) {
     const msg = MULTI_ACCOUNTS
       ? 'No sources yet. Add one above, then paste its cookies.'
-      : 'No Instagram account configured. Use cookies.json or the setup wizard to connect your account.';
+      : 'No Instagram account configured. Follow COOKIES-GUIDE.md (step-by-step instructions) to export your cookies and connect your account.';
     el.innerHTML = '<div class="section"><div class="empty">' + msg + '</div></div>';
     return;
   }

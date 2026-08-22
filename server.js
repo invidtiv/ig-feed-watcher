@@ -60,7 +60,6 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author);
   CREATE INDEX IF NOT EXISTS idx_posts_priority ON posts(is_priority);
   CREATE INDEX IF NOT EXISTS idx_posts_timestamp ON posts(timestamp);
-  CREATE INDEX IF NOT EXISTS idx_posts_source ON posts(source_id);
   CREATE TABLE IF NOT EXISTS comments (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     shortcode     TEXT NOT NULL,
@@ -79,6 +78,8 @@ db.exec(`
 try { db.exec("ALTER TABLE posts ADD COLUMN matched_groups TEXT DEFAULT '[]'"); } catch {}
 try { db.exec("ALTER TABLE posts ADD COLUMN source_id TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE posts ADD COLUMN source_name TEXT DEFAULT ''"); } catch {}
+// This index depends on source_id, so it must run after the ALTER migrations.
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_posts_source ON posts(source_id)"); } catch {}
 
 // ─── Fuzzy Match ─────────────────────────────────────────────────────────────
 

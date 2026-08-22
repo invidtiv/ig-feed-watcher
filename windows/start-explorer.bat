@@ -5,8 +5,11 @@ setlocal
 title IG Feed Watcher - Web Explorer
 cd /d "%~dp0.."
 
+REM Prefer a bundled portable node.exe (installer model); fall back to PATH.
+set "NODE_EXE=%~dp0..\node.exe"
+if not exist "%NODE_EXE%" set "NODE_EXE=node"
 where node >nul 2>nul
-if errorlevel 1 (
+if errorlevel 1 if not exist "%NODE_EXE%" (
   echo Node.js not found. Run install.bat first.
   pause
   exit /b 1
@@ -15,7 +18,7 @@ if errorlevel 1 (
 echo Starting the web app...
 echo Open http://localhost:4180 in your browser (opening automatically)...
 start "" http://localhost:4180
-node server.js
+"%NODE_EXE%" server.js
 echo.
 echo The web app stopped. Close this window or press a key.
 pause

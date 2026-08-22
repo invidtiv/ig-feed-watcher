@@ -24,6 +24,7 @@ import { execSync, spawn } from 'child_process';
 import { homedir } from 'os';
 import { DatabaseSync } from 'node:sqlite';
 import { listSources, getIngester, registerIngester, sanitizeCookies } from './sources.js';
+import { resolveChromeExecutable } from './browser-path.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -573,7 +574,7 @@ async function createBrowser() {
       '--disable-features=IsolateOrigins,site-per-process',
       '--window-size=1920,1080',
     ],
-    executablePath: puppeteer.executablePath(),
+    executablePath: resolveChromeExecutable(),
   });
 
   const page = await browser.newPage();

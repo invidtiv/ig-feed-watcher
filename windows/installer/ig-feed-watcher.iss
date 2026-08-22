@@ -1,18 +1,19 @@
 ; ═══════════════════════════════════════════════════════════════════════════
-;  IG Feed Watcher — Inno Setup installer script (DRAFT — adapt before use)
+;  IG Feed Watcher — Inno Setup installer script (Solution C)
 ;
 ;  Requires: Inno Setup 6 (free, https://jrsoftware.org/isinfo.php)
 ;  Build:    right-click → Compile, or:  ISCC.exe ig-feed-watcher.iss
 ;
-;  Staging layout (put the clean distribution folder + portable Node here):
+;  Staging layout (windows\installer\stage\):
 ;    stage\
-;      node.exe  npm.cmd  node_modules\...   <- portable Node v22.x from the
-;                                                 official win-x64 .zip, with
-;                                                 `npm install` already run so
-;                                                 Chromium is bundled
+;      node.exe  npm.cmd  node_modules\...   <- portable Node v22.x (official
+;                                                 win-x64 .zip) + `npm install`
+;                                                 already run (Chromium bundled
+;                                                 in stage\.puppeteer-cache)
 ;      watcher.js  server.js  ...            <- clean dist folder (HANDOFF §6)
 ;      hooks\on-new-post.js  windows\*.bat|*.ps1  api\  skills\
 ;      .env.example  sources.example.json  COOKIES-GUIDE.md  README.md
+;      .puppeteer-cache\chrome\...\chrome.exe <- bundled Chromium (M2 model)
 ;
 ;  Notes:
 ;   • Bundled node.exe is NOT on PATH — the installer calls it by full path
@@ -32,8 +33,7 @@
 #define Stage "stage"
 
 [Setup]
-; ⚠️ Replace with a freshly generated GUID (e.g. from an online GUID tool).
-AppId={{8F4E0A32-9B1E-4E3A-8A5F-1C2D3E4F5A6B}
+AppId={{6361D9A1-7EE6-45A8-BEAB-700DDD38C519}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
@@ -66,6 +66,8 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\node.exe"; Parameters: "se
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\node.exe"; Parameters: "server.js"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
+; Create .env.config from the template on first install (never ship real secrets).
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\windows\create-env-config.ps1"""; Flags: runhidden; StatusMsg: "Creating configuration..."
 ; Register the 5-minute scheduled task (only if the checkbox was ticked).
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\windows\install-scheduled-task.ps1"""; Flags: runhidden; Tasks: schedtask
 ; Open the web app when the wizard finishes.

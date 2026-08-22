@@ -15,3 +15,7 @@ posts.db.bak-*
 # Local npm / Puppeteer caches (used when global cache dirs are unavailable)
 .npm-cache/
 .puppeteer-cache/
+
+# Installer build output + staging (regenerable via windows/installer/ig-feed-watcher.iss)
+dist/
+windows/installer/stage/

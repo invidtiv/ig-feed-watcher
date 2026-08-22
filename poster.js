@@ -16,6 +16,7 @@ import puppeteer from 'puppeteer';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, appendFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { resolveChromeExecutable } from './browser-path.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -91,7 +92,7 @@ async function createBrowser() {
       '--disable-features=IsolateOrigins,site-per-process',
       '--window-size=1920,1080',
     ],
-    executablePath: puppeteer.executablePath(),
+    executablePath: resolveChromeExecutable(),
   });
 
   const page = await browser.newPage();

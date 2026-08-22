@@ -169,7 +169,18 @@ npm install
 
 ### 2. Export your Instagram cookies
 
-You need to provide your Instagram session cookies. Three options:
+You need to provide your Instagram session cookies.
+
+**Recommended:** run the interactive wizard — it walks you through the export
+step by step, captures the cookies into `sources.json` (hidden entry for
+`sessionid`), and writes the how-to guide:
+
+```bash
+./get-ig-cookies.sh
+```
+
+Full written instructions: [`COOKIES-GUIDE.md`](COOKIES-GUIDE.md). Three manual
+options:
 
 #### Option A — Manual export from browser DevTools (easiest for headless server)
 

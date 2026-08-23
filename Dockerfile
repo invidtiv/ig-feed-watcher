@@ -14,6 +14,7 @@ COPY server.js ./
 COPY sources.js ./
 COPY runtime-policy.js retention.js contract-policy.js ./
 COPY api/openapi.json ./api/openapi.json
+COPY skills/feed-api/SKILL.md ./skills/feed-api/SKILL.md
 
 EXPOSE 4180
 

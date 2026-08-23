@@ -1692,6 +1692,150 @@ loadGroups();
 
 // ─── Sources Settings Page ────────────────────────────────────────────────────
 
+// Read the docs shown on the Sources page (cookie guide + the agent skill for
+// the feed API). Fall back to a friendly note if the files are missing.
+function readDocOrNote(filePath, note) {
+  try {
+    if (!existsSync(filePath)) return note;
+    return readFileSync(filePath, 'utf-8');
+  } catch {
+    return note;
+  }
+}
+const COOKIES_GUIDE_MD = readDocOrNote(join(ROOT, 'COOKIES-GUIDE.md'), '_COOKIES-GUIDE.md is missing._');
+const FEED_API_SKILL_MD = readDocOrNote(join(ROOT, 'skills', 'feed-api', 'SKILL.md'), '_The feed-api agent skill is missing._');
+
+// Minimal server-side Markdown → HTML renderer for the two docs embedded in the
+// Sources page. Covers the subset used by COOKIES-GUIDE.md and SKILL.md:
+// headings, paragraphs, fenced code blocks, inline code, bold, links, lists,
+// blockquotes, tables and horizontal rules. Input is always escaped first.
+function escapeHtmlText(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function mdInline(s) {
+  let out = escapeHtmlText(s);
+  out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
+  out = out.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  return out;
+}
+
+function renderMarkdown(md) {
+  let source = String(md);
+  // Strip YAML frontmatter (--- ... ---) — it is metadata for skill systems,
+  // not display content.
+  if (/^---\s*$/.test(source.split(/\r?\n/)[0].trim())) {
+    const rest = source.replace(/^---[^\n]*\n/, '');
+    const end = rest.search(/\n---\s*(\r?\n|$)/);
+    if (end !== -1) source = rest.slice(end + 4);
+  }
+  const lines = source.split(/\r?\n/);
+  let html = '';
+  let inCode = false;
+  let codeBuf = [];
+  let listOpen = null; // 'ul' | 'ol' | null
+  let tableBuf = null; // { header: [...], rows: [[...]] }
+  let paraBuf = [];    // consecutive plain lines forming one paragraph
+
+  const closeList = () => {
+    if (listOpen) { html += `</${listOpen}>`; listOpen = null; }
+  };
+  const closeTable = () => {
+    if (tableBuf) {
+      html += '<table><thead><tr>' + tableBuf.header.map(c => `<th>${mdInline(c)}</th>`).join('') + '</tr></thead><tbody>';
+      html += tableBuf.rows.map(r => '<tr>' + r.map(c => `<td>${mdInline(c)}</td>`).join('') + '</tr>').join('');
+      html += '</tbody></table>';
+      tableBuf = null;
+    }
+  };
+  // Flush a buffered paragraph (joined with spaces so inline bold/code can
+  // span soft line wraps in the source).
+  const flushPara = () => {
+    if (paraBuf.length) {
+      html += `<p>${mdInline(paraBuf.join(' '))}</p>`;
+      paraBuf = [];
+    }
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+
+    // Fenced code blocks
+    if (/^```/.test(line)) {
+      flushPara();
+      if (inCode) {
+        html += '<pre><code>' + codeBuf.join('\n') + '</code></pre>';
+        inCode = false;
+        codeBuf = [];
+      } else {
+        closeList(); closeTable();
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) { codeBuf.push(escapeHtmlText(raw)); continue; }
+
+    if (!line) { flushPara(); closeList(); closeTable(); continue; }
+
+    // Headings
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      flushPara(); closeList(); closeTable();
+      const lvl = Math.min(h[1].length, 6);
+      html += `<h${lvl}>${mdInline(h[2])}</h${lvl}>`;
+      continue;
+    }
+
+    // Horizontal rule
+    if (/^(-{3,}|\*{3,})$/.test(line)) {
+      flushPara(); closeList(); closeTable();
+      html += '<hr>';
+      continue;
+    }
+
+    // Tables
+    if (line.startsWith('|')) {
+      flushPara();
+      const cells = line.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      // Skip the separator row (| --- | --- |)
+      if (/^[-: ]+$/.test(cells.join('')) && tableBuf) continue;
+      if (!tableBuf) {
+        closeList();
+        tableBuf = { header: cells, rows: [] };
+      } else {
+        tableBuf.rows.push(cells);
+      }
+      continue;
+    }
+    if (tableBuf) closeTable();
+
+    // Lists
+    const li = line.match(/^([-*]|\d+\.)\s+(.*)$/);
+    if (li) {
+      flushPara();
+      const tag = /^\d/.test(li[1]) ? 'ol' : 'ul';
+      if (listOpen !== tag) { closeList(); listOpen = tag; html += `<${tag}>`; }
+      html += `<li>${mdInline(li[2])}</li>`;
+      continue;
+    }
+    closeList();
+
+    // Blockquote
+    if (line.startsWith('>')) {
+      flushPara();
+      html += '<blockquote>' + mdInline(line.replace(/^>\s?/, '')) + '</blockquote>';
+      continue;
+    }
+
+    // Paragraph line — buffer so multi-line paragraphs format as one unit
+    paraBuf.push(line);
+  }
+  flushPara(); closeList(); closeTable();
+  if (inCode) html += '<pre><code>' + codeBuf.join('\n') + '</code></pre>';
+  return html;
+}
+
 const SOURCES_PAGE = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1749,6 +1893,29 @@ const SOURCES_PAGE = `<!DOCTYPE html>
   .api-links a { background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 12px; border-radius:8px; text-decoration:none; font-size:13px; }
   .api-links a:hover { border-color:var(--accent); }
   .empty { color:var(--text-dim); font-size:13px; font-style:italic; }
+
+  /* Rendered Markdown docs (COOKIES-GUIDE.md + agent skill) */
+  .md-doc { font-size:13px; line-height:1.6; color:var(--text); }
+  .md-doc h1 { font-size:19px; margin:14px 0 8px; color:var(--accent); }
+  .md-doc h2 { font-size:16px; margin:14px 0 6px; color:var(--accent); }
+  .md-doc h3 { font-size:14px; margin:12px 0 4px; }
+  .md-doc h4 { font-size:13px; margin:10px 0 4px; }
+  .md-doc p { margin:6px 0; }
+  .md-doc ul, .md-doc ol { margin:6px 0 6px 20px; }
+  .md-doc li { margin:2px 0; }
+  .md-doc code { background:#0d0d13; padding:2px 5px; border-radius:4px; font-size:12px; color:#c4b5fd; }
+  .md-doc pre { background:#0d0d13; border:1px solid var(--border); border-radius:8px; padding:10px; overflow-x:auto; margin:8px 0; }
+  .md-doc pre code { background:none; padding:0; }
+  .md-doc table { border-collapse:collapse; width:100%; margin:8px 0; font-size:12px; }
+  .md-doc th, .md-doc td { border:1px solid var(--border); padding:6px 10px; text-align:left; }
+  .md-doc th { background:#0d0d13; color:var(--accent); }
+  .md-doc blockquote { border-left:3px solid var(--accent); margin:8px 0; padding:4px 12px; color:var(--text-dim); }
+  .md-doc hr { border:none; border-top:1px solid var(--border); margin:14px 0; }
+  .md-doc a { color:var(--accent-hover); }
+  .steps { margin:14px 0 4px; }
+  .steps ol { margin:6px 0 0 20px; }
+  .steps li { margin:6px 0; font-size:13px; line-height:1.5; }
+  .steps code { background:#0d0d13; padding:2px 5px; border-radius:4px; font-size:12px; color:#c4b5fd; }
 </style>
 </head>
 <body>
@@ -1765,9 +1932,7 @@ const SOURCES_PAGE = `<!DOCTYPE html>
   <h2>Instagram account</h2>
   <div class="desc" id="account-desc">
     Paste your Instagram cookies below to connect the account the watcher reads
-    the feed from. Export them from your browser DevTools
-    (Application → Cookies → instagram.com) — step-by-step instructions are in
-    COOKIES-GUIDE.md. The cookies update the account immediately.
+    the feed from. The cookies update the account immediately.
   </div>
   <div class="field-row">
     <label>Account name
@@ -1780,6 +1945,27 @@ const SOURCES_PAGE = `<!DOCTYPE html>
     <div class="hint">Saving replaces ALL cookies for the account.</div>
   </div>
   <button class="add-btn" onclick="saveAccount()" id="acct-save-btn">💾 Add account</button>
+
+  <div class="steps">
+    <h3>Step-by-step: get your cookies</h3>
+    <ol>
+      <li>Open <b>Chrome or Edge</b> and go to <b>instagram.com</b>. Make sure you are <b>logged in</b> (you see your feed, not a login form).</li>
+      <li>Press <b>F12</b> (or right-click → <b>Inspect</b>) to open Developer Tools.</li>
+      <li>Click the <b>Application</b> tab (if hidden, use the <b>&gt;&gt;</b> menu).</li>
+      <li>In the left sidebar expand <b>Cookies</b> and click <b>https://www.instagram.com</b>.</li>
+      <li>Use the <b>Filter</b> box to find each cookie below, click its row, then copy its <b>Value</b> (double-click the value first to select it all, then Ctrl+C):</li>
+      <li><code>sessionid</code> — long token, 30–60 characters (the important one)</li>
+      <li><code>ds_user_id</code> — a number, 8–12 digits</li>
+      <li><code>csrftoken</code> — 32 hex characters</li>
+      <li>Build the JSON array and paste it into the <b>Cookies</b> box above, e.g.:
+        <pre><code>[{"name":"sessionid","value":"...","domain":".instagram.com"},
+ {"name":"ds_user_id","value":"...","domain":".instagram.com"},
+ {"name":"csrftoken","value":"...","domain":".instagram.com"}]</code></pre>
+      </li>
+      <li>Click <b id="acct-step-btn">💾 Add account</b>. You should see the account name and a green <code>sessionid ✓</code> chip below.</li>
+    </ol>
+    <div class="hint">⚠️ <code>sessionid</code> is your Instagram password — anyone who has it can read your DMs and post as you. Never paste it into chat, email or screenshots.</div>
+  </div>
 </div>
 
 <div id="sources-list"></div>
@@ -1815,6 +2001,21 @@ const SOURCES_PAGE = `<!DOCTYPE html>
   </div>
 </div>
 
+<div class="section">
+  <h2>📖 COOKIES-GUIDE.md</h2>
+  <div class="md-doc">
+${renderMarkdown(COOKIES_GUIDE_MD)}
+  </div>
+</div>
+
+<div class="section">
+  <h2>🤖 Agent skill — feed data API</h2>
+  <div class="desc">For external agents: how to reach and query the feed database through the HTTP API and the <code>feed-cli.js</code> wrapper. The full OpenAPI contract is at <code>/api/contract</code>.</div>
+  <div class="md-doc">
+${renderMarkdown(FEED_API_SKILL_MD)}
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1831,14 +2032,17 @@ function renderSources() {
   const el = document.getElementById('sources-list');
   const btn = document.getElementById('acct-save-btn');
   const desc = document.getElementById('account-desc');
+  const stepBtn = document.getElementById('acct-step-btn');
   if (sources.length === 0) {
     el.innerHTML = '';
     btn.textContent = '💾 Add account';
-    desc.textContent = 'Paste your Instagram cookies below to connect the account the watcher reads the feed from. Export them from your browser DevTools (Application → Cookies → instagram.com) — step-by-step instructions are in COOKIES-GUIDE.md.';
+    if (stepBtn) stepBtn.textContent = '💾 Add account';
+    desc.textContent = 'Paste your Instagram cookies below to connect the account the watcher reads the feed from. The cookies update the account immediately.';
     return;
   }
   btn.textContent = '💾 Save account';
-  desc.textContent = 'This is the account the watcher reads the feed from. Paste cookies below to replace the ones currently stored for "' + escapeHtml(sources[0].name) + '" — or edit the account card below. Export cookies from your browser DevTools (Application → Cookies → instagram.com).';
+  if (stepBtn) stepBtn.textContent = '💾 Save account';
+  desc.textContent = 'This is the account the watcher reads the feed from. Paste cookies below to replace the ones currently stored for "' + escapeHtml(sources[0].name) + '" — or edit the account card below.';
   document.getElementById('acct-name').value = sources[0].name;
   el.innerHTML = sources.map(cardHtml).join('');
   // Populate dynamic fields via DOM (avoids escaping issues).

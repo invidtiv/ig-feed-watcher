@@ -31,6 +31,7 @@ import {
 } from './sources.js';
 import { createFullAgentGuard, loadRuntimePolicy, writeConfigValue } from './runtime-policy.js';
 import { runImageRetention } from './retention.js';
+import { contractForCapabilities } from './contract-policy.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -911,8 +912,10 @@ app.get('/api/contract', (req, res) => serveContract(res));
 function serveContract(res) {
   try {
     if (existsSync(CONTRACT_FILE)) {
-      res.setHeader('Content-Type', 'application/json');
-      return res.send(readFileSync(CONTRACT_FILE, 'utf-8'));
+      const sourceContract = JSON.parse(readFileSync(CONTRACT_FILE, 'utf-8'));
+      return res.json(contractForCapabilities(sourceContract, {
+        fullAgent: RUNTIME_POLICY.fullAgent,
+      }));
     }
     res.status(404).json({ error: 'OpenAPI contract not found (expected at api/openapi.json)' });
   } catch (err) {

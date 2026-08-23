@@ -132,7 +132,10 @@ database of all feeds, per-group feeds, and individual posts with their images.
 The API is GET-only by default. Set `FULL_AGENT=1` to enable mutation methods
 (`POST`, `PUT`, `PATCH`, `DELETE`, and others) in both the feed API and the
 dedicated Instagram posting API. Rejected methods return `405 Method Not
-Allowed`; the guard runs before JSON or multipart upload processing.
+Allowed`; the guard runs before JSON or multipart upload processing. The served
+OpenAPI contract is capability-aware: read-only mode omits every non-GET
+operation and mutation-only path, while full-agent mode serves the complete
+contract.
 
 | Endpoint | Purpose |
 | --- | --- |

@@ -12,7 +12,7 @@ RUN npm install --omit=dev --no-audit --no-fund express@^4.22.2
 # sources.json — is provided by bind mounts from docker-compose.yml)
 COPY server.js ./
 COPY sources.js ./
-COPY runtime-policy.js retention.js ./
+COPY runtime-policy.js retention.js contract-policy.js ./
 COPY api/openapi.json ./api/openapi.json
 
 EXPOSE 4180

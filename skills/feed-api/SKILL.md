@@ -10,6 +10,9 @@ Access the IG Feed Watcher feed database through its HTTP API. Two ways to use i
 1. **HTTP API** — any `fetch`/`curl` against the running Web Explorer server.
 2. **`feed-cli.js`** — a dependency-free CLI wrapper (recommended for agents).
 
+You can also fetch this skill's full content over the API and install it into
+your own skill library — see [Install / update this skill](#install--update-this-skill).
+
 ## Prerequisites
 
 - The Web Explorer server must be running — double-click the **IG Feed
@@ -45,6 +48,14 @@ node feed-cli.js export --out feeds.json
 # The full data contract (OpenAPI)
 node feed-cli.js contract
 curl -s 'http://127.0.0.1:4180/api/contract'
+
+# This skill, as a JSON envelope (name, description, path, full content)
+node feed-cli.js skill
+curl -s 'http://127.0.0.1:4180/api/skill'
+
+# This skill, as raw Markdown (frontmatter included)
+curl -s 'http://127.0.0.1:4180/api/skill.md'
+curl -s 'http://127.0.0.1:4180/api/skill?format=md'
 ```
 
 > **Windows install:** the app lives in `%LOCALAPPDATA%\IG Feed Watcher` and
@@ -70,6 +81,7 @@ curl -s 'http://127.0.0.1:4180/api/contract'
 | `POST /api/groups/{id}/remove` | Remove one account/keyword/hashtag from a group |
 | `GET /api/sources` | Ingestion sources (cookie values masked) |
 | `GET /api/contract` | The OpenAPI data contract |
+| `GET /api/skill` | This skill, as a JSON envelope or raw Markdown (`?format=md`, `/api/skill.md`) |
 
 Common filters (query params): `group`, `source`, `author`, `search`, `reel=0|1`,
 `date_from`, `date_to`, `limit` (max 500), `offset`, `sort`, `order`.
@@ -163,6 +175,23 @@ Details and rules:
 `cookieNames`, `hasSessionId`, `cookieCount`). Cookie **values are never
 returned** — only names and whether `sessionid` is present. Use
 `source_id` on a post to see which account ingested it.
+
+## Install / update this skill
+
+If this skill is not yet in your skill library (or may be out of date), fetch
+the full content over the API and install it yourself:
+
+- **Raw Markdown (recommended for installs):** `GET /api/skill.md` (or
+  `GET /api/skill?format=md`) returns this exact file, frontmatter included.
+  Save it verbatim as `skills/feed-api/SKILL.md` in your skill directory.
+- **JSON envelope:** `GET /api/skill` returns `{ "name": "feed-api",
+  "description": "...", "path": "skills/feed-api/SKILL.md", "content": "..." }`.
+  Write the `content` field to `skills/feed-api/SKILL.md`.
+- **CLI:** `node feed-cli.js skill --out skills/feed-api/SKILL.md` writes the
+  file for you; `node feed-cli.js skill` prints the JSON envelope.
+
+The content you receive is the canonical copy — install it verbatim, including
+the YAML frontmatter at the top, and replace any older copy.
 
 ## Notes
 

@@ -22,6 +22,7 @@
  *   node feed-cli.js sources
  *   node feed-cli.js export [--group ID] [--source ID] [--author X] [--out FILE]
  *   node feed-cli.js contract
+ *   node feed-cli.js skill [--out SKILL.md]   (self-install: writes the raw skill file)
  *
  * Environment:
  *   FEED_API_URL — base URL (default http://127.0.0.1:4180)
@@ -47,6 +48,8 @@ Commands:
   sources                List ingestion sources (cookie values masked).
   export [filters]       Export post metadata as JSON.
   contract               Print the OpenAPI data contract.
+  skill [--out SKILL.md] Print this API's agent skill (JSON envelope), or write
+                         the raw SKILL.md to a file to install/update it locally.
 
 Group options:
   --name "Name"          Group name (required for group-create).
@@ -89,7 +92,7 @@ function parseArgs(argv) {
 
 const COMMANDS = new Set([
   'feeds', 'post', 'groups', 'group', 'group-create', 'group-update',
-  'group-delete', 'group-add', 'group-remove', 'sources', 'export', 'contract', 'help',
+  'group-delete', 'group-add', 'group-remove', 'sources', 'export', 'contract', 'skill', 'help',
 ]);
 
 async function api(path, query, opts = {}) {
@@ -216,6 +219,17 @@ async function main() {
     }
     case 'contract': {
       emit(await api('/api/contract'), flags);
+      break;
+    }
+    case 'skill': {
+      const data = await api('/api/skill');
+      if (flags.out) {
+        // Self-install: write the full SKILL.md verbatim (frontmatter included).
+        writeFileSync(flags.out, data.content);
+        process.stderr.write(`Wrote ${flags.out}\n`);
+      } else {
+        emit(data, flags);
+      }
       break;
     }
     default:

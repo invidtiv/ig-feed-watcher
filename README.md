@@ -164,6 +164,12 @@ curl -s 'http://localhost:4180/api/export' > feeds.json
 
 # The contract
 curl -s 'http://localhost:4180/api/contract'
+
+# The agent skill (JSON envelope: name, description, path, full content)
+curl -s 'http://localhost:4180/api/skill'
+
+# The agent skill as raw Markdown — save it to install/update the skill
+curl -s 'http://localhost:4180/api/skill.md' -o SKILL.md
 ```
 
 A dependency-free CLI wraps the same API:
@@ -180,6 +186,8 @@ node feed-cli.js group-add g_mr7u3k93 --type account --value carol
 node feed-cli.js group-remove g_mr7u3k93 --type keyword --value "agroecologia"
 node feed-cli.js group-delete g_mr7u3k93
 node feed-cli.js contract
+node feed-cli.js skill                       # print this API's agent skill (JSON envelope)
+node feed-cli.js skill --out SKILL.md        # self-install: write the raw SKILL.md
 ```
 
 Group mutations (create/update/delete/add/remove) persist to `groups.json` and
@@ -187,7 +195,10 @@ are picked up by the watcher on its next cycle — no restart needed. The full
 group management contract (request/response shapes, error codes) is in
 `api/openapi.json` and served live at `/api/contract`.
 
-An agent skill documenting this API lives in `skills/feed-api/SKILL.md`.
+An agent skill documenting this API lives in `skills/feed-api/SKILL.md` and is
+served live at `/api/skill` (JSON envelope) and `/api/skill.md` (raw Markdown),
+so an agent can fetch the full skill and install it into its own skill library
+without prior knowledge of this repo.
 
 ## Feed Watcher Setup
 

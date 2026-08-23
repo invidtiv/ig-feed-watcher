@@ -899,6 +899,47 @@ function serveContract(res) {
   }
 }
 
+// ─── Agent skill (self-installable) ──────────────────────────────────────────
+
+const SKILL_FILE = join(ROOT, 'skills', 'feed-api', 'SKILL.md');
+
+// Pull `name` and `description` out of the skill's YAML frontmatter so the
+// JSON envelope tells an agent exactly where to install the skill. Falls back
+// to the directory-derived defaults when the frontmatter is missing/malformed.
+function parseSkillFrontmatter(content) {
+  const nameMatch = /(?:^|\n)name:\s*["']?([^"'\n]+)/.exec(content);
+  const descMatch = /(?:^|\n)description:\s*["']?([^"'\n]+)/.exec(content);
+  return {
+    name: nameMatch ? nameMatch[1].trim() : 'feed-api',
+    description: descMatch ? descMatch[1].trim() : 'IG Feed Watcher feed data API',
+  };
+}
+
+app.get('/api/skill', (req, res) => serveSkill(res, req));
+// Raw-markdown alias for humans and `curl -o` installs.
+app.get('/api/skill.md', (req, res) => serveSkill(res, req, true));
+
+function serveSkill(res, req, rawOnly = false) {
+  try {
+    if (!existsSync(SKILL_FILE)) {
+      return res.status(404).json({ error: 'Agent skill not found (expected at skills/feed-api/SKILL.md)' });
+    }
+    const content = readFileSync(SKILL_FILE, 'utf-8');
+    const wantsRaw = rawOnly
+      || req.query.format === 'md'
+      || req.query.format === 'markdown'
+      || (req.headers.accept || '').includes('text/markdown');
+    if (wantsRaw) {
+      res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+      return res.send(content);
+    }
+    const { name, description } = parseSkillFrontmatter(content);
+    res.json({ name, description, path: 'skills/feed-api/SKILL.md', content });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 // ─── Frontend ─────────────────────────────────────────────────────────────────
 
 app.get('/', (req, res) => {
@@ -1718,7 +1759,6 @@ function readDocOrNote(filePath, note) {
   }
 }
 const COOKIES_GUIDE_MD = readDocOrNote(join(ROOT, 'COOKIES-GUIDE.md'), '_COOKIES-GUIDE.md is missing._');
-const FEED_API_SKILL_MD = readDocOrNote(join(ROOT, 'skills', 'feed-api', 'SKILL.md'), '_The feed-api agent skill is missing._');
 
 // Minimal server-side Markdown → HTML renderer for the two docs embedded in the
 // Sources page. Covers the subset used by COOKIES-GUIDE.md and SKILL.md:
@@ -1907,6 +1947,8 @@ const SOURCES_PAGE = `<!DOCTYPE html>
   .api-links { display:flex; flex-wrap:wrap; gap:8px; }
   .api-links a { background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 12px; border-radius:8px; text-decoration:none; font-size:13px; }
   .api-links a:hover { border-color:var(--accent); }
+  .skill-hint { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-size:13px; line-height:1.6; margin-bottom:10px; }
+  .skill-hint code { background:var(--card); border:1px solid var(--border); border-radius:4px; padding:1px 5px; font-size:12px; }
   .empty { color:var(--text-dim); font-size:13px; font-style:italic; }
 
   /* Rendered Markdown docs (COOKIES-GUIDE.md + agent skill) */
@@ -2013,6 +2055,7 @@ const SOURCES_PAGE = `<!DOCTYPE html>
     <a href="/api/groups" target="_blank">/api/groups</a>
     <a href="/api/export" target="_blank">/api/export</a>
     <a href="/api/contract" target="_blank">/api/contract (OpenAPI)</a>
+    <a href="/api/skill" target="_blank">/api/skill (agent skill)</a>
   </div>
 </div>
 
@@ -2025,10 +2068,13 @@ ${renderMarkdown(COOKIES_GUIDE_MD)}
 
 <div class="section">
   <h2>🤖 Agent skill — feed data API</h2>
-  <div class="desc">For external agents: how to reach and query the feed database through the HTTP API and the <code>feed-cli.js</code> wrapper. The full OpenAPI contract is at <code>/api/contract</code>.</div>
-  <div class="md-doc">
-${renderMarkdown(FEED_API_SKILL_MD)}
+  <div class="desc">The full agent skill for this API is served by the server itself, so an agent can fetch and install it without prior knowledge of this repo.</div>
+  <div class="skill-hint">
+    <code>GET /api/skill</code> (JSON envelope: name, description, path, content) or
+    <code>GET /api/skill.md</code> (raw Markdown) — save the content to
+    <code>skills/feed-api/SKILL.md</code>.
   </div>
+  <button class="add-btn" onclick="copySkillHint()">📋 Copy install instructions</button>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -2255,6 +2301,26 @@ function showToast(msg, isError) {
   toast.textContent = msg;
   toast.className = 'toast show' + (isError ? ' error' : '');
   setTimeout(function () { toast.className = 'toast'; }, 2500);
+}
+
+function copySkillHint() {
+  const text = 'Fetch the IG Feed Watcher feed-api skill with GET /api/skill (JSON envelope: name, description, path, content) or GET /api/skill.md (raw Markdown), then save the content verbatim (frontmatter included) to skills/feed-api/SKILL.md.';
+  const done = function () { showToast('Install instructions copied'); };
+  const failed = function () { showToast('Copy failed — select the text manually', true); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, failed);
+  } else {
+    // Fallback for older browsers / non-secure contexts.
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); }
+    catch (e) { failed(); }
+    document.body.removeChild(ta);
+  }
 }
 
 function escapeHtml(str) {

@@ -8,7 +8,7 @@
 
 ## Step 1 — Install the app (2 minutes)
 
-1. Double-click **`IG-Feed-Watcher-Setup-1.1.0.exe`**.
+1. Double-click **`IG-Feed-Watcher-Setup-1.2.0.exe`**.
 2. Windows may show **"Windows protected your PC"** → click
    **More info → Run anyway** (the app is not code-signed yet).
 3. Click through the wizard (**Next → Install**). Leave the checkboxes as you

@@ -1,6 +1,6 @@
 {
   "name": "ig-feed-watcher",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Headless Instagram feed watcher with custom script hooks, Telegram alerts, and posting API",
   "main": "watcher.js",
   "type": "module",

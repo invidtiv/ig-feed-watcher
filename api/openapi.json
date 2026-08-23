@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "IG Feed Watcher — Feed Data API",
-    "version": "1.1.0",
-    "description": "Data contract for the IG Feed Watcher feed database. Provides all feeds, per-group feeds, individual posts with their image, sources/cookies management, full interest-group management (create, update, delete, and add/remove accounts, keywords, and hashtags per group), and JSON metadata export."
+    "version": "1.2.0",
+    "description": "Data contract for the IG Feed Watcher feed database. Provides all feeds, per-group feeds, individual posts with their image, sources/cookies management, full interest-group management (create, update, delete, and add/remove accounts, keywords, and hashtags per group), JSON metadata export, and the self-installable agent skill for this API."
   },
   "servers": [
     {
@@ -15,7 +15,8 @@
     { "name": "feeds", "description": "Feed posts stored in the database" },
     { "name": "groups", "description": "Interest groups and their feeds; full group management (accounts, keywords, hashtags)" },
     { "name": "sources", "description": "Ingestion sources (accounts) and their cookies" },
-    { "name": "export", "description": "Bulk JSON export of post metadata" }
+    { "name": "export", "description": "Bulk JSON export of post metadata" },
+    { "name": "skill", "description": "The self-installable agent skill for this API" }
   ],
   "paths": {
     "/api/feeds": {
@@ -343,6 +344,34 @@
           "200": { "description": "The OpenAPI 3.0 document." }
         }
       }
+    },
+    "/api/skill": {
+      "get": {
+        "tags": ["skill"],
+        "summary": "Get the self-installable agent skill for this API",
+        "description": "Returns the full feed-api agent skill so an agent can install or update it in its own skill library. The default response is a JSON envelope with `name`, `description`, `path`, and the complete `content` (the raw SKILL.md, frontmatter included). Request the raw Markdown with `?format=md`, `?format=markdown`, an `Accept: text/markdown` header, or the `/api/skill.md` alias.",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["md", "markdown"] },
+            "description": "Return the raw SKILL.md instead of the JSON envelope."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The agent skill (JSON envelope, or raw Markdown when requested).",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Skill" } },
+              "text/markdown": { "schema": { "type": "string" } }
+            }
+          },
+          "404": {
+            "description": "Skill file not found.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -374,6 +403,16 @@
         "type": "object",
         "properties": {
           "ok": { "type": "boolean" }
+        }
+      },
+      "Skill": {
+        "type": "object",
+        "required": ["name", "description", "path", "content"],
+        "properties": {
+          "name": { "type": "string", "description": "Skill name (kebab-case, matches the skill's frontmatter)." },
+          "description": { "type": "string", "description": "Skill description from the frontmatter." },
+          "path": { "type": "string", "description": "Relative path of the SKILL.md within the app." },
+          "content": { "type": "string", "description": "The full SKILL.md content (frontmatter included) — install by writing it to skills/<name>/SKILL.md." }
         }
       },
       "Group": {

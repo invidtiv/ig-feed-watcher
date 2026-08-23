@@ -1,6 +1,6 @@
 ---
 name: feed-api
-description: Query and manage the IG Feed Watcher feed database. Use when you need to read feeds (all posts or a single group's posts), fetch an individual post with its image, list sources/groups, export post metadata as JSON, or manage interest groups — create, update, delete, and add/remove accounts, keywords, and hashtags per group. Triggered by requests like "list the feeds", "show posts in the Florest group", "get post <shortcode> with its image", "create a group", "add this account to the Photos group", or "export feed metadata as JSON".
+description: Query and manage the IG Feed Watcher feed database. Use when you need to read feeds (all posts or a single group's posts), fetch an individual post with its image, list sources/groups, export post metadata as JSON, or manage interest groups — create, update, delete, and add/remove accounts, keywords, and hashtags per group. Triggered by requests like "list the feeds", "show posts in the Florest group", "get post <shortcode> with its image", "create a group", "add this account to a group", or "export feed metadata as JSON".
 ---
 
 # Feed Data API

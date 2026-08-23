@@ -171,6 +171,14 @@ Include: app code (`*.js`, `hooks/`, `api/`, `skills/`), `package.json` +
 `package-lock.json`, `.env.example`, `sources.example.json`,
 `COOKIES-GUIDE.md`, `README.md`, `windows/`, `WINDOWS-DEPLOYMENT.md`.
 
+> **Automate this with `windows\installer\prepare-stage.ps1`** — it copies the
+> clean file set into `windows\installer\stage\` using exactly the rules above
+> (never touches the stage's pre-built `node.exe`, `node_modules\`, or
+> `.puppeteer-cache\`) **and strips the personal "Photos" group from
+> `stage\groups.json`** so recipients never get that test group seeded. The
+> repo's own `groups.json` (live local data) is left untouched. Run it before
+> every installer build.
+
 **Two packaging models — decide with the user if unsure:**
 
 - **M1 — require Node install (smaller, simpler installer):** recipient runs
@@ -195,6 +203,11 @@ Tool: **Inno Setup 6** (free, jrsoftware.org). A **draft script** is provided
 at `windows/installer/ig-feed-watcher.iss` — adapt the staging layout and
 `[Files]` sources to your build folder, then compile (right-click → Compile,
 or `ISCC.exe ig-feed-watcher.iss`).
+
+**Before every build, run `windows\installer\prepare-stage.ps1`** — it
+refreshes `stage\` with the latest app files and removes the personal
+"Photos" group from `stage\groups.json` (the wizard task "Create a desktop
+icon" is checked by default in the `.iss`).
 
 **Bundled Node:** the installer ships portable `node.exe` beside the app (NOT
 on PATH). The `.iss` calls `{app}\node.exe server.js` for shortcuts, and

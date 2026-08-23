@@ -23,10 +23,14 @@
 ;   • Never ship sources.json / cookies.json / .env.config / posts.db /
 ;     state.json / screenshots / logs — recipients paste their own cookies in
 ;     the web UI (🔑 Sources) and follow COOKIES-GUIDE.md.
+;   • Before compiling, run windows\installer\prepare-stage.ps1 — it refreshes
+;     the stage from the repo and strips the personal "Photos" group from
+;     stage\groups.json (recipients get a clean group seed).
+;   • The "Create a desktop icon" wizard task is checked by default.
 ; ═══════════════════════════════════════════════════════════════════════════
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.0"
+  #define MyAppVersion "1.1.0"
 #endif
 #define MyAppName "IG Feed Watcher"
 #define MyAppPublisher "IG Feed Watcher"
@@ -56,7 +60,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "schedtask"; Description: "Check Instagram for new posts every 5 minutes automatically"; GroupDescription: "Automatic checking:"; Flags: unchecked
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 Source: "{#Stage}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

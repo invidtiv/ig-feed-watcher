@@ -8,14 +8,15 @@
 
 ## Step 1 — Install the app (2 minutes)
 
-1. Double-click **`IG-Feed-Watcher-Setup-1.0.0.exe`**.
+1. Double-click **`IG-Feed-Watcher-Setup-1.1.0.exe`**.
 2. Windows may show **"Windows protected your PC"** → click
    **More info → Run anyway** (the app is not code-signed yet).
 3. Click through the wizard (**Next → Install**). Leave the checkboxes as you
    like:
    - ☐ **Check Instagram automatically every 5 minutes** — tick this if you
      want alerts without keeping a window open (recommended).
-   - ☐ **Create a desktop icon** — recommended.
+   - ☑ **Create a desktop icon** — already ticked; leave it on so you get a
+     shortcut on your desktop.
 4. Click **Finish**. The web app opens in your browser at
    **http://localhost:4180**.
 

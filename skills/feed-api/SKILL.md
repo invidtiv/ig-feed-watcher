@@ -1,6 +1,6 @@
 ---
 name: feed-api
-description: Query and export the IG Feed Watcher feed database. Use when you need to read feeds (all posts or a single group's posts), fetch an individual post with its image, list sources/groups, or export post metadata as JSON. Triggered by requests like "list the feeds", "show posts in the Florest group", "get post <shortcode> with its image", or "export feed metadata as JSON".
+description: Query and manage the IG Feed Watcher feed database. Use when you need to read feeds (all posts or a single group's posts), fetch an individual post with its image, list sources/groups, export post metadata as JSON, or manage interest groups — create, update, delete, and add/remove accounts, keywords, and hashtags per group. Triggered by requests like "list the feeds", "show posts in the Florest group", "get post <shortcode> with its image", "create a group", "add this account to the Photos group", or "export feed metadata as JSON".
 ---
 
 # Feed Data API
@@ -61,7 +61,13 @@ curl -s 'http://127.0.0.1:4180/api/contract'
 | `GET /api/feeds/{shortcode}` | One post, metadata + `image` reference |
 | `GET /api/feeds/{shortcode}/image` | Raw image bytes for a post |
 | `GET /api/export` | Bulk JSON export of post metadata |
-| `GET /api/groups` | Interest groups with post counts |
+| `GET /api/groups` | All groups with full details (accounts, keywords, hashtags, post counts) |
+| `GET /api/groups/{id}` | One group's full details |
+| `POST /api/groups` | Create a group |
+| `PUT /api/groups/{id}` | Update a group (rename, recolor, replace lists) |
+| `DELETE /api/groups/{id}` | Delete a group |
+| `POST /api/groups/{id}/add` | Add one account/keyword/hashtag to a group |
+| `POST /api/groups/{id}/remove` | Remove one account/keyword/hashtag from a group |
 | `GET /api/sources` | Ingestion sources (cookie values masked) |
 | `GET /api/contract` | The OpenAPI data contract |
 
@@ -96,9 +102,60 @@ The detail endpoint (`/api/feeds/{shortcode}`) adds `image` (an object with `url
 
 ## Groups
 
-`GET /api/groups` returns each group with `id`, `name`, `color`, `accounts`,
-`keywords`, `hashtags`, and `post_count`. Use a group's `id` with
-`/api/groups/{id}/feeds` or the `--group`/`group` filter.
+`GET /api/groups` returns every group with `id`, `name`, `color`, `accounts`,
+`keywords`, `hashtags`, `telegramThreadId`, and `post_count`. Use a group's
+`id` with `/api/groups/{id}/feeds` or the `--group`/`group` filter.
+
+```json
+{
+  "groups": [
+    {
+      "id": "g_mr7u3k93",
+      "name": "Florest",
+      "color": "#26f50a",
+      "accounts": ["mda_sc", "mda_brasil", "mdagovbr"],
+      "keywords": ["Agricultura Familiar", "reforma agrária", "INCRA"],
+      "hashtags": ["#agriculturafamiliar", "#reformaagraria"],
+      "telegramThreadId": 1800,
+      "post_count": 42
+    }
+  ]
+}
+```
+
+### Group management (create / update / delete / add / remove)
+
+Agents can fully manage groups through the API. `POST`/`PUT`/`DELETE` on
+`/api/groups*` mirror the settings page at `/settings`.
+
+| Operation | `feed-cli.js` | HTTP |
+| --- | --- | --- |
+| List all groups | `node feed-cli.js groups` | `GET /api/groups` |
+| One group's details | `node feed-cli.js group g_mr7u3k93` | `GET /api/groups/{id}` |
+| Create a group | `node feed-cli.js group-create --name "Name" --color #26f50a` | `POST /api/groups` |
+| Rename/recolor | `node feed-cli.js group-update g_mr7u3k93 --name "New"` | `PUT /api/groups/{id}` |
+| Delete a group | `node feed-cli.js group-delete g_mr7u3k93` | `DELETE /api/groups/{id}` |
+| Add one item | `node feed-cli.js group-add g_mr7u3k93 --type account --value username` | `POST /api/groups/{id}/add` |
+| Remove one item | `node feed-cli.js group-remove g_mr7u3k93 --type keyword --value "reforma agrária"` | `POST /api/groups/{id}/remove` |
+
+Details and rules:
+
+- **Create** — `POST /api/groups` with `{ "name": "...", "color": "#hex",
+  "accounts": [...], "keywords": [...], "hashtags": [...] }`. Only `name` is
+  required (must be unique). A Telegram forum topic is created automatically
+  when Telegram is configured.
+- **Update** — `PUT /api/groups/{id}` accepts any subset of `name`, `color`,
+  `accounts`, `keywords`, `hashtags`. **Providing `accounts`/`keywords`/
+  `hashtags` REPLACES the whole list** — omit a field to leave it unchanged.
+- **Add/remove single items** — `POST /api/groups/{id}/add` and
+  `POST /api/groups/{id}/remove` take `{ "type": "account" | "keyword" |
+  "hashtag", "value": "..." }`. Adds ignore duplicates; removes are exact
+  matches and are a no-op when absent.
+- **List values** — `accounts` (👤), `keywords` (🔑), `hashtags` (#) are the
+  three per-group lists that drive post matching. Read them from any
+  `GET /api/groups` (or `GET /api/groups/{id}`) response.
+- All mutation responses are `{ "ok": true, "group": { ... } }` (delete returns
+  `{ "ok": true }`); errors are `{ "error": "..." }` with 400/404/500.
 
 ## Sources
 
@@ -113,4 +170,6 @@ returned** — only names and whether `sessionid` is present. Use
 - The image endpoint serves JPEG/PNG/WebP bytes directly.
 - `POST`/`PUT`/`DELETE` on `/api/sources*` manage sources and cookie values
   (see the settings page at `/settings/sources`).
+- Group mutations persist to `groups.json` and are picked up by the watcher on
+  its next cycle — no restart needed.
 - Read the full contract with `GET /api/contract` before coding against it.

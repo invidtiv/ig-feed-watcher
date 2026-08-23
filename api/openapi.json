@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "IG Feed Watcher — Feed Data API",
-    "version": "1.0.0",
-    "description": "Data contract for the IG Feed Watcher feed database. Provides all feeds, per-group feeds, individual posts with their image, sources/cookies management, and JSON metadata export."
+    "version": "1.1.0",
+    "description": "Data contract for the IG Feed Watcher feed database. Provides all feeds, per-group feeds, individual posts with their image, sources/cookies management, full interest-group management (create, update, delete, and add/remove accounts, keywords, and hashtags per group), and JSON metadata export."
   },
   "servers": [
     {
@@ -13,7 +13,7 @@
   ],
   "tags": [
     { "name": "feeds", "description": "Feed posts stored in the database" },
-    { "name": "groups", "description": "Interest groups and their feeds" },
+    { "name": "groups", "description": "Interest groups and their feeds; full group management (accounts, keywords, hashtags)" },
     { "name": "sources", "description": "Ingestion sources (accounts) and their cookies" },
     { "name": "export", "description": "Bulk JSON export of post metadata" }
   ],
@@ -61,7 +61,7 @@
             "description": "Posts matched to the group.",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PostList" } } }
           },
-          "404": { "description": "Group not found." }
+          "404": { "description": "Group not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },
@@ -200,9 +200,138 @@
     "/api/groups": {
       "get": {
         "tags": ["groups"],
-        "summary": "List interest groups with post counts",
+        "summary": "List interest groups with full details",
+        "description": "Returns every group with its id, name, color, 👤 accounts, 🔑 keywords, # hashtags, Telegram thread id, and live post_count.",
         "responses": {
-          "200": { "description": "Groups." }
+          "200": {
+            "description": "All groups.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupList" } } }
+          }
+        }
+      },
+      "post": {
+        "tags": ["groups"],
+        "summary": "Create a group",
+        "description": "Creates a group. `name` is required; `color` defaults to #6366f1; accounts, keywords, and hashtags are optional initial lists. A Telegram forum topic is created for the group when Telegram is configured.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupCreateInput" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "The created group.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupResult" } } }
+          },
+          "400": {
+            "description": "Group name is required, or a group with this name already exists.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/groups/{id}": {
+      "get": {
+        "tags": ["groups"],
+        "summary": "Get one group with full details",
+        "description": "Returns a single group including its 👤 accounts, 🔑 keywords, # hashtags, and live post_count.",
+        "parameters": [ { "$ref": "#/components/parameters/groupId" } ],
+        "responses": {
+          "200": {
+            "description": "The group.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupDetail" } } }
+          },
+          "404": {
+            "description": "Group not found.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      },
+      "put": {
+        "tags": ["groups"],
+        "summary": "Update a group (rename, recolor, replace lists)",
+        "description": "Updates the group. All fields are optional. Providing `accounts`, `keywords`, or `hashtags` REPLACES the full list; omit a list to leave it unchanged. To add or remove a single item, use POST /api/groups/{id}/add and POST /api/groups/{id}/remove instead.",
+        "parameters": [ { "$ref": "#/components/parameters/groupId" } ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupUpdateInput" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated group.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupResult" } } }
+          },
+          "404": {
+            "description": "Group not found.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["groups"],
+        "summary": "Delete a group",
+        "description": "Deletes the group. Existing posts are kept but lose their group association.",
+        "parameters": [ { "$ref": "#/components/parameters/groupId" } ],
+        "responses": {
+          "200": {
+            "description": "Deleted.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResult" } } }
+          },
+          "404": {
+            "description": "Group not found.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/groups/{id}/add": {
+      "post": {
+        "tags": ["groups"],
+        "summary": "Add one account, keyword, or hashtag to a group",
+        "description": "Adds a single item to the group's 👤 accounts, 🔑 keywords, or # hashtags list. Duplicates are ignored (the item is added only if not already present).",
+        "parameters": [ { "$ref": "#/components/parameters/groupId" } ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupItemInput" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated group.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupResult" } } }
+          },
+          "400": {
+            "description": "Value is required.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "404": {
+            "description": "Group not found.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/groups/{id}/remove": {
+      "post": {
+        "tags": ["groups"],
+        "summary": "Remove one account, keyword, or hashtag from a group",
+        "description": "Removes a single item from the group's 👤 accounts, 🔑 keywords, or # hashtags list. Removing an item that is not present is a no-op.",
+        "parameters": [ { "$ref": "#/components/parameters/groupId" } ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupItemInput" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "The updated group.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupResult" } } }
+          },
+          "400": {
+            "description": "Value is required.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "404": {
+            "description": "Group not found.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
         }
       }
     },
@@ -219,7 +348,7 @@
   "components": {
     "parameters": {
       "shortcode": { "name": "shortcode", "in": "path", "required": true, "schema": { "type": "string" } },
-      "groupId": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Group id." },
+      "groupId": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Group id (e.g. g_mr7u3k93)." },
       "sourceId": { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Source id." },
       "limit": { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 500 }, "description": "Page size." },
       "offset": { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 }, "description": "Page offset." },
@@ -234,6 +363,90 @@
       "order": { "name": "order", "in": "query", "schema": { "type": "string", "enum": ["ASC", "DESC"], "default": "DESC" } }
     },
     "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": { "type": "string", "description": "Human-readable error message." }
+        }
+      },
+      "OkResult": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" }
+        }
+      },
+      "Group": {
+        "type": "object",
+        "required": ["id", "name", "accounts", "keywords", "hashtags"],
+        "properties": {
+          "id": { "type": "string", "description": "Stable group id (e.g. g_mr7u3k93)." },
+          "name": { "type": "string", "description": "Group name." },
+          "color": { "type": ["string", "null"], "description": "Hex color, e.g. #26f50a." },
+          "accounts": { "type": "array", "items": { "type": "string" }, "description": "👤 Instagram account usernames this group watches." },
+          "keywords": { "type": "array", "items": { "type": "string" }, "description": "🔑 Caption keywords this group matches." },
+          "hashtags": { "type": "array", "items": { "type": "string" }, "description": "# Hashtags this group matches (kept with or without the leading #)." },
+          "telegramThreadId": { "type": ["integer", "null"], "description": "Telegram forum topic thread id for this group, when Telegram is configured." }
+        }
+      },
+      "GroupDetail": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Group" },
+          {
+            "type": "object",
+            "properties": {
+              "post_count": { "type": "integer", "description": "Number of posts currently matched to this group." }
+            }
+          }
+        ]
+      },
+      "GroupList": {
+        "type": "object",
+        "properties": {
+          "groups": { "type": "array", "items": { "$ref": "#/components/schemas/GroupDetail" } }
+        }
+      },
+      "GroupCreateInput": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "description": "Group name (required, must be unique)." },
+          "color": { "type": "string", "description": "Hex color, e.g. #6366f1. Defaults to #6366f1." },
+          "accounts": { "type": "array", "items": { "type": "string" }, "description": "👤 Initial account usernames." },
+          "keywords": { "type": "array", "items": { "type": "string" }, "description": "🔑 Initial keywords." },
+          "hashtags": { "type": "array", "items": { "type": "string" }, "description": "# Initial hashtags." }
+        }
+      },
+      "GroupUpdateInput": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "New group name (rename)." },
+          "color": { "type": "string", "description": "New hex color." },
+          "accounts": { "type": "array", "items": { "type": "string" }, "description": "Replaces the whole 👤 accounts list." },
+          "keywords": { "type": "array", "items": { "type": "string" }, "description": "Replaces the whole 🔑 keywords list." },
+          "hashtags": { "type": "array", "items": { "type": "string" }, "description": "Replaces the whole # hashtags list." }
+        }
+      },
+      "GroupItemInput": {
+        "type": "object",
+        "required": ["type", "value"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["account", "keyword", "hashtag"],
+            "description": "Which list to modify: 👤 account, 🔑 keyword, or # hashtag."
+          },
+          "value": { "type": "string", "description": "The item to add or remove (exact match for remove)." }
+        }
+      },
+      "GroupResult": {
+        "type": "object",
+        "required": ["ok", "group"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "group": { "$ref": "#/components/schemas/Group" }
+        }
+      },
       "MatchedGroup": {
         "type": "object",
         "properties": {

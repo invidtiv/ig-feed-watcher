@@ -597,6 +597,21 @@ app.get('/api/groups', (req, res) => {
   }
 });
 
+// Get a single group with its post count
+app.get('/api/groups/:id', (req, res) => {
+  try {
+    const group = loadGroups().find(g => g.id === req.params.id);
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+    res.json({
+      ...group,
+      post_count: db.prepare('SELECT COUNT(*) as count FROM posts WHERE matched_groups LIKE ?')
+        .get(`%"id":"${group.id}"%`).count,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Create a group
 app.post('/api/groups', async (req, res) => {
   try {

@@ -133,7 +133,13 @@ database of all feeds, per-group feeds, and individual posts with their images.
 | `GET /api/feeds/{shortcode}` | One post + image reference |
 | `GET /api/feeds/{shortcode}/image` | Raw image bytes for a post |
 | `GET /api/export` | Bulk JSON export of post metadata |
-| `GET /api/groups` | Groups with post counts |
+| `GET /api/groups` | All groups with full details (accounts, keywords, hashtags, post counts) |
+| `GET /api/groups/{id}` | One group's full details |
+| `POST /api/groups` | Create a group |
+| `PUT /api/groups/{id}` | Update a group (rename, recolor, replace lists) |
+| `DELETE /api/groups/{id}` | Delete a group |
+| `POST /api/groups/{id}/add` | Add one account/keyword/hashtag to a group |
+| `POST /api/groups/{id}/remove` | Remove one account/keyword/hashtag from a group |
 | `GET /api/sources` | Sources (cookie values masked) |
 | `GET /api/contract` | The OpenAPI data contract |
 
@@ -166,8 +172,20 @@ A dependency-free CLI wraps the same API:
 node feed-cli.js feeds --group g_mr7u3k93
 node feed-cli.js post C1b2dEf
 node feed-cli.js export --out feeds.json
+node feed-cli.js groups
+node feed-cli.js group g_mr7u3k93
+node feed-cli.js group-create --name "New Group" --accounts alice,bob --keywords "agroecologia" --hashtags "#agroecologia"
+node feed-cli.js group-update g_mr7u3k93 --color "#26f50a"
+node feed-cli.js group-add g_mr7u3k93 --type account --value carol
+node feed-cli.js group-remove g_mr7u3k93 --type keyword --value "agroecologia"
+node feed-cli.js group-delete g_mr7u3k93
 node feed-cli.js contract
 ```
+
+Group mutations (create/update/delete/add/remove) persist to `groups.json` and
+are picked up by the watcher on its next cycle — no restart needed. The full
+group management contract (request/response shapes, error codes) is in
+`api/openapi.json` and served live at `/api/contract`.
 
 An agent skill documenting this API lives in `skills/feed-api/SKILL.md`.
 

@@ -226,8 +226,10 @@ AUTO_RETENTION=2
 IMAGE_RETENTION_DAYS=30
 ```
 
-In mode `2`, set a positive whole-number `retention_days` on a group through
-the settings page, `POST /api/groups`, or `PUT /api/groups/{id}`. A group with
+In mode `2`, the **Groups** page shows each group's configured retention or its
+inherited global value. Set a positive whole-number `retention_days` there,
+through `POST /api/groups`, or through `PUT /api/groups/{id}`. Set the global
+`IMAGE_RETENTION_DAYS` value from **Sources & Cookies → Image retention**. A group with
 no override uses `IMAGE_RETENTION_DAYS`. An ungrouped image also uses the global
 value. When an image belongs to multiple groups, the longest applicable value
 wins. The watcher checks once per ingestion run; the explorer also checks on

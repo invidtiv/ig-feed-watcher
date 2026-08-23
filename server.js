@@ -29,7 +29,7 @@ import {
   sourceToPublic,
   listIngesterTypes,
 } from './sources.js';
-import { createFullAgentGuard, loadRuntimePolicy } from './runtime-policy.js';
+import { createFullAgentGuard, loadRuntimePolicy, writeConfigValue } from './runtime-policy.js';
 import { runImageRetention } from './retention.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -176,6 +176,22 @@ function parseGroupRetentionDays(value) {
   return Number.isInteger(days) && days > 0 ? days : NaN;
 }
 
+function groupWithRetention(group, policy = loadRuntimePolicy(ROOT)) {
+  const parsedDays = parseGroupRetentionDays(group.retention_days);
+  const configuredDays = Number.isInteger(parsedDays) && parsedDays > 0 ? parsedDays : null;
+  const effectiveDays = policy.retentionMode === 1
+    ? policy.imageRetentionDays
+    : policy.retentionMode === 2
+      ? (configuredDays ?? policy.imageRetentionDays)
+      : null;
+  return {
+    ...group,
+    retention_days: configuredDays ?? null,
+    effective_retention_days: effectiveDays,
+    retention_inherited: policy.retentionMode === 2 && configuredDays === null,
+  };
+}
+
 // ─── Telegram ─────────────────────────────────────────────────────────────────
 
 function loadTelegramConfig() {
@@ -219,29 +235,6 @@ function loadTelegramConfig() {
     botToken: process.env.TG_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN,
     chatId: process.env.TELEGRAM_HOME_CHANNEL || process.env.TG_CHAT_ID,
   };
-}
-
-// Write/update a KEY=VALUE entry in the local .env.config file, preserving
-// comments and unrelated keys. Used by the Telegram settings UI. Empty values
-// are kept as-is (the caller decides whether to omit the key).
-function writeEnvValue(key, value) {
-  const file = join(ROOT, '.env.config');
-  let lines = [];
-  if (existsSync(file)) lines = readFileSync(file, 'utf-8').split(/\r?\n/);
-  const out = [];
-  let replaced = false;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const m = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-    if (m && m[1] === key) {
-      out.push(`${key}=${value}`);
-      replaced = true;
-    } else {
-      out.push(line);
-    }
-  }
-  if (!replaced) out.push(`${key}=${value}`);
-  writeFileSync(file, out.join('\n'), 'utf-8');
 }
 
 // Map a hex color to the closest Telegram topic icon color
@@ -563,8 +556,9 @@ app.post('/api/posts/:shortcode/groups', (req, res) => {
 // List all groups (with post counts)
 app.get('/api/groups', (req, res) => {
   try {
+    const policy = loadRuntimePolicy(ROOT);
     const groups = loadGroups().map(g => ({
-      ...g,
+      ...groupWithRetention(g, policy),
       post_count: db.prepare('SELECT COUNT(*) as count FROM posts WHERE matched_groups LIKE ?')
         .get(`%"id":"${g.id}"%`).count,
     }));
@@ -580,7 +574,7 @@ app.get('/api/groups/:id', (req, res) => {
     const group = loadGroups().find(g => g.id === req.params.id);
     if (!group) return res.status(404).json({ error: 'Group not found' });
     res.json({
-      ...group,
+      ...groupWithRetention(group),
       post_count: db.prepare('SELECT COUNT(*) as count FROM posts WHERE matched_groups LIKE ?')
         .get(`%"id":"${group.id}"%`).count,
     });
@@ -623,7 +617,7 @@ app.post('/api/groups', async (req, res) => {
 
     groups.push(group);
     saveGroups(groups);
-    res.json({ ok: true, group });
+    res.json({ ok: true, group: groupWithRetention(group) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -652,7 +646,7 @@ app.put('/api/groups/:id', (req, res) => {
     }
 
     saveGroups(groups);
-    res.json({ ok: true, group });
+    res.json({ ok: true, group: groupWithRetention(group) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -688,7 +682,7 @@ app.post('/api/groups/:id/add', (req, res) => {
     if (!group[field].includes(v)) group[field].push(v);
 
     saveGroups(groups);
-    res.json({ ok: true, group });
+    res.json({ ok: true, group: groupWithRetention(group) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -706,7 +700,7 @@ app.post('/api/groups/:id/remove', (req, res) => {
     group[field] = (group[field] || []).filter(item => item !== value);
 
     saveGroups(groups);
-    res.json({ ok: true, group });
+    res.json({ ok: true, group: groupWithRetention(group) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -793,13 +787,50 @@ app.put('/api/settings/telegram', (req, res) => {
   try {
     const { botToken, chatId } = req.body || {};
     if (botToken !== undefined && typeof botToken === 'string' && botToken.trim()) {
-      writeEnvValue('TG_BOT_TOKEN', botToken.trim());
+      writeConfigValue(ROOT, 'TG_BOT_TOKEN', botToken.trim());
     }
     if (chatId !== undefined && typeof chatId === 'string' && chatId.trim()) {
-      writeEnvValue('TELEGRAM_HOME_CHANNEL', chatId.trim());
+      writeConfigValue(ROOT, 'TELEGRAM_HOME_CHANNEL', chatId.trim());
     }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/settings/retention', (req, res) => {
+  const policy = loadRuntimePolicy(ROOT);
+  res.json({
+    auto_retention: policy.retentionMode,
+    image_retention_days: policy.imageRetentionDays,
+    group_overrides_enabled: policy.retentionMode === 2,
+    editable: !(process.env.IMAGE_RETENTION_DAYS !== undefined && process.env.IMAGE_RETENTION_DAYS !== ''),
+    mutations_enabled: RUNTIME_POLICY.fullAgent,
+  });
+});
+
+app.put('/api/settings/retention', (req, res) => {
+  const days = Number(req.body?.image_retention_days);
+  if (!Number.isInteger(days) || days <= 0) {
+    return res.status(400).json({ error: 'image_retention_days must be a positive whole number' });
+  }
+  if (process.env.IMAGE_RETENTION_DAYS !== undefined && process.env.IMAGE_RETENTION_DAYS !== '') {
+    return res.status(409).json({
+      error: 'IMAGE_RETENTION_DAYS is controlled by the process environment and cannot be changed here.',
+    });
+  }
+  try {
+    writeConfigValue(ROOT, 'IMAGE_RETENTION_DAYS', String(days));
+    const policy = loadRuntimePolicy(ROOT);
+    return res.json({
+      ok: true,
+      auto_retention: policy.retentionMode,
+      image_retention_days: policy.imageRetentionDays,
+      group_overrides_enabled: policy.retentionMode === 2,
+      editable: true,
+      mutations_enabled: RUNTIME_POLICY.fullAgent,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: `Failed to save image retention: ${err.message}` });
+  }
 });
 
 // ─── Feeds API (the data contract) ────────────────────────────────────────────
@@ -1516,9 +1547,9 @@ const SETTINGS_PAGE = `<!DOCTYPE html>
     <label>Color
       <input type="color" id="new-group-color" class="color-input" value="#6366f1">
     </label>
-    ${RUNTIME_POLICY.retentionMode === 2 ? `<label>Image retention (days)
-      <input type="number" id="new-group-retention" min="1" step="1" placeholder="Global (${RUNTIME_POLICY.imageRetentionDays ?? 'unset'})">
-    </label>` : ''}
+    <label id="new-group-retention-label" style="display:${RUNTIME_POLICY.retentionMode === 2 ? 'flex' : 'none'}">Image retention (days)
+      <input type="number" id="new-group-retention" min="1" step="1" placeholder="Use global (${RUNTIME_POLICY.imageRetentionDays ?? 'unset'})">
+    </label>
     <button class="add-btn" onclick="createGroup()">+ Create Group</button>
   </div>
 </div>
@@ -1529,12 +1560,23 @@ const SETTINGS_PAGE = `<!DOCTYPE html>
 
 <script>
 let groups = [];
-const retentionMode = ${RUNTIME_POLICY.retentionMode};
+let retentionMode = ${RUNTIME_POLICY.retentionMode};
+let globalRetentionDays = ${RUNTIME_POLICY.imageRetentionDays ?? 'null'};
 
 async function loadGroups() {
-  const res = await fetch('/api/groups');
-  const data = await res.json();
+  const [groupsRes, retentionRes] = await Promise.all([
+    fetch('/api/groups'),
+    fetch('/api/settings/retention'),
+  ]);
+  const data = await groupsRes.json();
+  const retention = await retentionRes.json();
   groups = data.groups || [];
+  retentionMode = retention.auto_retention;
+  globalRetentionDays = retention.image_retention_days;
+  const createRetention = document.getElementById('new-group-retention');
+  const createRetentionLabel = document.getElementById('new-group-retention-label');
+  if (createRetention) createRetention.placeholder = 'Use global (' + (globalRetentionDays || 'unset') + ')';
+  if (createRetentionLabel) createRetentionLabel.style.display = retentionMode === 2 ? 'flex' : 'none';
   renderGroups();
 }
 
@@ -1549,8 +1591,12 @@ function renderGroups() {
 
 function groupCardHtml(g) {
   const color = g.color || '#6366f1';
+  const effectiveRetention = g.effective_retention_days || globalRetentionDays;
+  const retentionBadge = retentionMode === 2
+    ? '<span class="group-stats">🖼 Retention: ' + (effectiveRetention || 'unset') + (effectiveRetention ? ' days' : '') + (g.retention_inherited ? ' (global)' : '') + '</span>'
+    : '';
   const retentionControl = retentionMode === 2
-    ? '<label>Image retention (days)<input type="number" id="edit-retention-' + g.id + '" min="1" step="1" placeholder="Use global" value="' + (g.retention_days || '') + '"></label>'
+    ? '<label>Image retention (days)<input type="number" id="edit-retention-' + g.id + '" min="1" step="1" placeholder="Use global (' + (globalRetentionDays || 'unset') + ')" value="' + (g.retention_days || '') + '"></label>'
     : '';
   return '<div class="group-card" id="card-' + g.id + '" style="border-left-color:' + color + '">' +
     '<div class="group-header">' +
@@ -1558,6 +1604,7 @@ function groupCardHtml(g) {
         '<span class="group-dot" style="background:' + color + '"></span>' +
         '<span>' + escapeHtml(g.name) + '</span>' +
         '<span class="group-stats">' + g.post_count + ' posts</span>' +
+        retentionBadge +
       '</div>' +
       '<div class="group-actions">' +
         '<button onclick="toggleExpand(\\'' + g.id + '\\')">Edit</button>' +
@@ -2029,6 +2076,18 @@ const SOURCES_PAGE = `<!DOCTYPE html>
 
 <div id="sources-list"></div>
 
+<div class="section" id="retention-section">
+  <h2>Image retention</h2>
+  <div class="desc" id="retention-desc">Loading image-retention settings…</div>
+  <div class="field-row">
+    <label>Global image retention (days)
+      <input type="number" id="global-retention-days" min="1" step="1" placeholder="e.g. 30">
+    </label>
+    <button class="add-btn" id="retention-save-btn" onclick="saveRetentionSettings()">💾 Save global retention</button>
+  </div>
+  <div class="hint" id="retention-current"></div>
+</div>
+
 <div class="section" id="telegram-section">
   <h2>Telegram alerts</h2>
   <div class="desc">
@@ -2278,6 +2337,59 @@ async function loadTelegramSettings() {
   }
 }
 
+async function loadRetentionSettings() {
+  const res = await fetch('/api/settings/retention');
+  const data = await res.json();
+  const input = document.getElementById('global-retention-days');
+  const button = document.getElementById('retention-save-btn');
+  const desc = document.getElementById('retention-desc');
+  const current = document.getElementById('retention-current');
+  input.value = data.image_retention_days || '';
+
+  if (data.auto_retention === 2) {
+    desc.textContent = 'AUTO_RETENTION=2: this is the fallback for all images. Each group can override it on the Groups page; an image in multiple groups keeps the longest retention.';
+  } else if (data.auto_retention === 1) {
+    desc.textContent = 'AUTO_RETENTION=1: this global value applies to every image.';
+  } else {
+    desc.textContent = 'Automatic retention is disabled. Set AUTO_RETENTION=1 or 2 in .env.config to activate this saved global value.';
+  }
+
+  if (!data.editable) {
+    input.disabled = true;
+    button.disabled = true;
+    current.textContent = 'IMAGE_RETENTION_DAYS is supplied by the process environment, so change it there.';
+  } else if (!data.mutations_enabled) {
+    button.disabled = true;
+    current.textContent = 'Read-only API mode: set FULL_AGENT=1 and restart the explorer to save this value.';
+  } else {
+    input.disabled = false;
+    button.disabled = false;
+    current.textContent = data.image_retention_days
+      ? 'Current global retention: ' + data.image_retention_days + ' day(s).'
+      : 'No valid global retention is configured yet.';
+  }
+}
+
+async function saveRetentionSettings() {
+  const days = Number(document.getElementById('global-retention-days').value);
+  if (!Number.isInteger(days) || days <= 0) {
+    showToast('Global retention must be a positive whole number', true);
+    return;
+  }
+  const res = await fetch('/api/settings/retention', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image_retention_days: days }),
+  });
+  const result = await res.json();
+  if (result.ok) {
+    showToast('Global image retention saved');
+    loadRetentionSettings();
+  } else {
+    showToast('Error: ' + (result.error || 'failed'), true);
+  }
+}
+
 async function saveTelegram() {
   const botToken = document.getElementById('tg-token').value.trim();
   const chatId = document.getElementById('tg-chat').value.trim();
@@ -2333,6 +2445,7 @@ function escapeHtml(str) {
 // Init
 loadSources();
 loadTelegramSettings();
+loadRetentionSettings();
 </script>
 </body>
 </html>`;
@@ -2340,8 +2453,9 @@ loadTelegramSettings();
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 function applyImageRetention() {
-  if (RUNTIME_POLICY.retentionMode === 0) return;
-  if (RUNTIME_POLICY.imageRetentionDays === null) {
+  const retentionPolicy = loadRuntimePolicy(ROOT);
+  if (retentionPolicy.retentionMode === 0) return;
+  if (retentionPolicy.imageRetentionDays === null) {
     console.error('Image retention is enabled but IMAGE_RETENTION_DAYS is not a positive whole number; cleanup skipped.');
     return;
   }
@@ -2349,8 +2463,8 @@ function applyImageRetention() {
     db,
     screenshotsDir: SCREENSHOTS_DIR,
     groups: loadGroups(),
-    mode: RUNTIME_POLICY.retentionMode,
-    globalDays: RUNTIME_POLICY.imageRetentionDays,
+    mode: retentionPolicy.retentionMode,
+    globalDays: retentionPolicy.imageRetentionDays,
   });
   console.log(`Image retention: checked ${result.checked}, expired ${result.expired}, deleted ${result.deleted}, missing ${result.missing}, errors ${result.errors}`);
 }

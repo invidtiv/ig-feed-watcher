@@ -14,7 +14,8 @@ services:
       - ./priority-list.json:/app/priority-list.json:ro
       - ./groups.json:/app/groups.json
       - ./sources.json:/app/sources.json
-      - ./.env.config:/app/.env.config:ro
+      # Writable so Sources & Cookies can update IMAGE_RETENTION_DAYS.
+      - ./.env.config:/app/.env.config
     networks:
       - nginx-proxy-manager_npm-network
 

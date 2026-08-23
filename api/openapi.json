@@ -15,6 +15,7 @@
     { "name": "feeds", "description": "Feed posts stored in the database" },
     { "name": "groups", "description": "Interest groups and their feeds; full group management (accounts, keywords, hashtags, image retention)" },
     { "name": "sources", "description": "Ingestion sources (accounts) and their cookies" },
+    { "name": "settings", "description": "Runtime settings exposed to the web settings pages" },
     { "name": "export", "description": "Bulk JSON export of post metadata" },
     { "name": "skill", "description": "The self-installable agent skill for this API" }
   ],
@@ -336,6 +337,34 @@
         }
       }
     },
+    "/api/settings/retention": {
+      "get": {
+        "tags": ["settings"],
+        "summary": "Get image-retention settings",
+        "description": "Returns AUTO_RETENTION mode, the global IMAGE_RETENTION_DAYS value, and whether per-group overrides are active.",
+        "responses": {
+          "200": {
+            "description": "Current image-retention settings.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RetentionSettings" } } }
+          }
+        }
+      },
+      "put": {
+        "tags": ["settings"],
+        "summary": "Set global image retention",
+        "description": "Persists IMAGE_RETENTION_DAYS to .env.config. Requires FULL_AGENT=1. In AUTO_RETENTION=2 this is the fallback for ungrouped images and groups without an override.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RetentionSettingsInput" } } }
+        },
+        "responses": {
+          "200": { "description": "Global retention saved.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RetentionSettings" } } } },
+          "400": { "description": "Value is not a positive whole number." },
+          "405": { "description": "API is read-only because FULL_AGENT is not 1." },
+          "409": { "description": "IMAGE_RETENTION_DAYS is owned by the process environment." }
+        }
+      }
+    },
     "/api/contract": {
       "get": {
         "tags": ["feeds"],
@@ -426,6 +455,8 @@
           "keywords": { "type": "array", "items": { "type": "string" }, "description": "🔑 Caption keywords this group matches." },
           "hashtags": { "type": "array", "items": { "type": "string" }, "description": "# Hashtags this group matches (kept with or without the leading #)." },
           "retention_days": { "type": ["integer", "null"], "minimum": 1, "description": "Image retention override used when AUTO_RETENTION=2. Null or absent uses IMAGE_RETENTION_DAYS." },
+          "effective_retention_days": { "type": ["integer", "null"], "minimum": 1, "readOnly": true, "description": "Retention actually applied under the current AUTO_RETENTION mode." },
+          "retention_inherited": { "type": "boolean", "readOnly": true, "description": "True when AUTO_RETENTION=2 and this group inherits IMAGE_RETENTION_DAYS." },
           "telegramThreadId": { "type": ["integer", "null"], "description": "Telegram forum topic thread id for this group, when Telegram is configured." }
         }
       },
@@ -487,6 +518,24 @@
         "properties": {
           "ok": { "type": "boolean" },
           "group": { "$ref": "#/components/schemas/Group" }
+        }
+      },
+      "RetentionSettings": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "auto_retention": { "type": "integer", "enum": [0, 1, 2] },
+          "image_retention_days": { "type": ["integer", "null"], "minimum": 1 },
+          "group_overrides_enabled": { "type": "boolean" },
+          "editable": { "type": "boolean" },
+          "mutations_enabled": { "type": "boolean" }
+        }
+      },
+      "RetentionSettingsInput": {
+        "type": "object",
+        "required": ["image_retention_days"],
+        "properties": {
+          "image_retention_days": { "type": "integer", "minimum": 1 }
         }
       },
       "MatchedGroup": {

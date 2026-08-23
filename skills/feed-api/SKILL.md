@@ -82,6 +82,8 @@ curl -s 'http://127.0.0.1:4180/api/skill?format=md'
 | `POST /api/groups/{id}/add` | Add one account/keyword/hashtag to a group |
 | `POST /api/groups/{id}/remove` | Remove one account/keyword/hashtag from a group |
 | `GET /api/sources` | Ingestion sources (cookie values masked) |
+| `GET /api/settings/retention` | Current automatic/global image-retention settings |
+| `PUT /api/settings/retention` | Set global `image_retention_days` (`FULL_AGENT=1`) |
 | `GET /api/contract` | The OpenAPI data contract |
 | `GET /api/skill` | This skill, as a JSON envelope or raw Markdown (`?format=md`, `/api/skill.md`) |
 
@@ -206,4 +208,7 @@ the YAML frontmatter at the top, and replace any older copy.
   (see the settings page at `/settings/sources`).
 - Group mutations persist to `groups.json` and are picked up by the watcher on
   its next cycle — no restart needed.
+- In `AUTO_RETENTION=2`, group responses include `retention_days`,
+  `effective_retention_days`, and `retention_inherited`. Set the global fallback
+  with `PUT /api/settings/retention` and `{ "image_retention_days": 30 }`.
 - Read the full contract with `GET /api/contract` before coding against it.

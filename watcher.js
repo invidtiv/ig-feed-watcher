@@ -30,7 +30,6 @@ import { runImageRetention } from './retention.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
-const RUNTIME_POLICY = loadRuntimePolicy(ROOT);
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -1413,17 +1412,18 @@ async function runOnce() {
   // Load interest groups
   const groups = loadGroups();
   log(`Groups loaded: ${groups.length} group(s) — ${groups.map(g => g.name).join(', ') || 'none'}`);
+  const runtimePolicy = loadRuntimePolicy(ROOT);
 
-  if (RUNTIME_POLICY.retentionMode !== 0) {
-    if (RUNTIME_POLICY.imageRetentionDays === null) {
+  if (runtimePolicy.retentionMode !== 0) {
+    if (runtimePolicy.imageRetentionDays === null) {
       log('WARNING: AUTO_RETENTION is enabled but IMAGE_RETENTION_DAYS is not a positive whole number; cleanup skipped');
     } else {
       const retention = runImageRetention({
         db,
         screenshotsDir: CONFIG.screenshotsDir,
         groups,
-        mode: RUNTIME_POLICY.retentionMode,
-        globalDays: RUNTIME_POLICY.imageRetentionDays,
+        mode: runtimePolicy.retentionMode,
+        globalDays: runtimePolicy.imageRetentionDays,
       });
       log(`Image retention: checked ${retention.checked}, expired ${retention.expired}, deleted ${retention.deleted}, missing ${retention.missing}, errors ${retention.errors}`);
     }
@@ -1439,9 +1439,9 @@ async function runOnce() {
   // Load sources and run each enabled one through its ingester.
   const sources = listSources();
   const allEnabled = sources.filter(s => s.enabled !== false);
-  const enabled = selectRunnableSources(sources, RUNTIME_POLICY.multiAccount);
+  const enabled = selectRunnableSources(sources, runtimePolicy.multiAccount);
   log(`Sources loaded: ${sources.length} total, ${enabled.length} enabled — ${enabled.map(s => `${s.name}[${s.type}]`).join(', ') || 'none'}`);
-  if (!RUNTIME_POLICY.multiAccount && allEnabled.length > 1) {
+  if (!runtimePolicy.multiAccount && allEnabled.length > 1) {
     log(`MULTI_ACCOUNT=0: blocked ${allEnabled.length - 1} additional enabled account(s); only "${enabled[0].name}" will run`);
   }
 

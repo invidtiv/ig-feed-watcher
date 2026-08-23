@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 function parseEnvFile(filePath) {
@@ -22,6 +22,20 @@ export function readConfigValue(root, key) {
   if (process.env[key] !== undefined && process.env[key] !== '') return process.env[key];
   const local = parseEnvFile(join(root, '.env.config'));
   return local[key] !== undefined && local[key] !== '' ? local[key] : undefined;
+}
+
+export function writeConfigValue(root, key, value) {
+  const filePath = join(root, '.env.config');
+  const lines = existsSync(filePath) ? readFileSync(filePath, 'utf-8').split(/\r?\n/) : [];
+  let replaced = false;
+  const updated = lines.map(line => {
+    const match = line.trim().match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match || match[1] !== key) return line;
+    replaced = true;
+    return `${key}=${value}`;
+  });
+  if (!replaced) updated.push(`${key}=${value}`);
+  writeFileSync(filePath, updated.join('\n'), 'utf-8');
 }
 
 export function multiAccountEnabled(value, legacyValue) {

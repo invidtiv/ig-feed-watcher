@@ -2143,7 +2143,7 @@ function cardHtml(s) {
       '<h3>Cookies — ' + s.cookieCount + ' set (' + sess + ')</h3>' +
       '<div id="src-cookies-' + s.id + '" style="margin-bottom:8px"></div>' +
       '<textarea class="cookies-json" id="src-cookie-json-' + s.id + '" placeholder=\\'Paste cookies as a JSON array here, e.g. [{"name":"sessionid","value":"...","domain":".instagram.com"}]. Saving replaces ALL cookies for this source.\\'></textarea>' +
-      '<div class="hint">Export from your browser DevTools (Application → Cookies → instagram.com) or use <code>python3 export-cookies.py</code>. Critical cookies: <code>sessionid</code>, <code>ds_user_id</code>, <code>csrftoken</code>.</div>' +
+      '<div class="hint">Export from your browser DevTools (Application → Cookies → instagram.com) — step-by-step in the guide below. Critical cookies: <code>sessionid</code>, <code>ds_user_id</code>, <code>csrftoken</code>.</div>' +
     '</div>' +
   '</div>';
 }

@@ -12,13 +12,16 @@ Access the IG Feed Watcher feed database through its HTTP API. Two ways to use i
 
 ## Prerequisites
 
-- The Web Explorer server must be running (`node server.js`, default port **4180**).
+- The Web Explorer server must be running — double-click the **IG Feed
+  Watcher** icon (desktop or Start menu), or run `windows\start-explorer.bat`
+  in the app folder (`%LOCALAPPDATA%\IG Feed Watcher`). It serves on port
+  **4180**.
 - Set `FEED_API_URL` if the server is not at `http://127.0.0.1:4180`.
 
 ## Quick start
 
 ```bash
-cd /home/bsdev/ig-feed-watcher          # (or the active worktree)
+cd "$env:LOCALAPPDATA\IG Feed Watcher"  # PowerShell — the installed app folder
 
 # All feeds (first 50)
 node feed-cli.js feeds
@@ -43,6 +46,11 @@ node feed-cli.js export --out feeds.json
 node feed-cli.js contract
 curl -s 'http://127.0.0.1:4180/api/contract'
 ```
+
+> **Windows install:** the app lives in `%LOCALAPPDATA%\IG Feed Watcher` and
+> bundles its own Node runtime (`node.exe` in that folder is **not** on
+> PATH). If `node` is not found, call the bundled runtime directly instead,
+> e.g. `& "$env:LOCALAPPDATA\IG Feed Watcher\node.exe" feed-cli.js feeds`.
 
 ## Endpoints
 

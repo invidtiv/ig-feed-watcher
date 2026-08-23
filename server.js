@@ -32,6 +32,7 @@ import {
 import { createFullAgentGuard, loadRuntimePolicy, writeConfigValue } from './runtime-policy.js';
 import { runImageRetention } from './retention.js';
 import { contractForCapabilities } from './contract-policy.js';
+import { skillForCapabilities } from './skill-policy.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -948,7 +949,10 @@ function serveSkill(res, req, rawOnly = false) {
     if (!existsSync(SKILL_FILE)) {
       return res.status(404).json({ error: 'Agent skill not found (expected at skills/feed-api/SKILL.md)' });
     }
-    const content = readFileSync(SKILL_FILE, 'utf-8');
+    const sourceSkill = readFileSync(SKILL_FILE, 'utf-8');
+    const content = skillForCapabilities(sourceSkill, {
+      fullAgent: RUNTIME_POLICY.fullAgent,
+    });
     const wantsRaw = rawOnly
       || req.query.format === 'md'
       || req.query.format === 'markdown'

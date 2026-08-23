@@ -10,8 +10,9 @@ Access the IG Feed Watcher feed database through its HTTP API. Two ways to use i
 1. **HTTP API** — any `fetch`/`curl` against the running Web Explorer server.
 2. **`feed-cli.js`** — a dependency-free CLI wrapper (recommended for agents).
 
-You can also fetch this skill's full content over the API and install it into
-your own skill library — see [Install / update this skill](#install--update-this-skill).
+You can also fetch the skill version for the server's current API capabilities
+and install it into your own skill library — see
+[Install / update this skill](#install--update-this-skill).
 
 ## Prerequisites
 
@@ -20,8 +21,10 @@ your own skill library — see [Install / update this skill](#install--update-th
   in the app folder (`%LOCALAPPDATA%\IG Feed Watcher`). It serves on port
   **4180**.
 - Set `FEED_API_URL` if the server is not at `http://127.0.0.1:4180`.
+<!-- FULL_AGENT_ONLY_START -->
 - Mutation methods require `FULL_AGENT=1` on the server. Without it, the API
   intentionally allows GET requests only and returns 405 for other methods.
+<!-- FULL_AGENT_ONLY_END -->
 
 ## Quick start
 
@@ -47,11 +50,11 @@ curl -s 'http://127.0.0.1:4180/api/feeds/C1b2dEf/image' -o post.jpg
 # Export all metadata as JSON (to a file)
 node feed-cli.js export --out feeds.json
 
-# The full data contract (OpenAPI)
+# The current data contract (OpenAPI)
 node feed-cli.js contract
 curl -s 'http://127.0.0.1:4180/api/contract'
 
-# This skill, as a JSON envelope (name, description, path, full content)
+# This skill, as a JSON envelope (name, description, path, served content)
 node feed-cli.js skill
 curl -s 'http://127.0.0.1:4180/api/skill'
 
@@ -76,16 +79,23 @@ curl -s 'http://127.0.0.1:4180/api/skill?format=md'
 | `GET /api/export` | Bulk JSON export of post metadata |
 | `GET /api/groups` | All groups with full details (accounts, keywords, hashtags, retention, post counts) |
 | `GET /api/groups/{id}` | One group's full details |
+| `GET /api/sources` | Ingestion sources (cookie values masked) |
+| `GET /api/settings/retention` | Current automatic/global image-retention settings |
+| `GET /api/contract` | The OpenAPI data contract |
+| `GET /api/skill` | This skill, as a JSON envelope or raw Markdown (`?format=md`, `/api/skill.md`) |
+
+<!-- FULL_AGENT_ONLY_START -->
+Mutation endpoints available in full-agent mode:
+
+| Endpoint | Purpose |
+| --- | --- |
 | `POST /api/groups` | Create a group |
 | `PUT /api/groups/{id}` | Update a group (rename, recolor, replace lists) |
 | `DELETE /api/groups/{id}` | Delete a group |
 | `POST /api/groups/{id}/add` | Add one account/keyword/hashtag to a group |
 | `POST /api/groups/{id}/remove` | Remove one account/keyword/hashtag from a group |
-| `GET /api/sources` | Ingestion sources (cookie values masked) |
-| `GET /api/settings/retention` | Current automatic/global image-retention settings |
 | `PUT /api/settings/retention` | Set global `image_retention_days` (`FULL_AGENT=1`) |
-| `GET /api/contract` | The OpenAPI data contract |
-| `GET /api/skill` | This skill, as a JSON envelope or raw Markdown (`?format=md`, `/api/skill.md`) |
+<!-- FULL_AGENT_ONLY_END -->
 
 Common filters (query params): `group`, `source`, `author`, `search`, `reel=0|1`,
 `date_from`, `date_to`, `limit` (max 500), `offset`, `sort`, `order`.
@@ -140,6 +150,7 @@ The detail endpoint (`/api/feeds/{shortcode}`) adds `image` (an object with `url
 }
 ```
 
+<!-- FULL_AGENT_ONLY_START -->
 ### Group management (create / update / delete / add / remove)
 
 Agents can fully manage groups through the API. `POST`/`PUT`/`DELETE` on
@@ -175,6 +186,7 @@ Details and rules:
   `GET /api/groups` (or `GET /api/groups/{id}`) response.
 - All mutation responses are `{ "ok": true, "group": { ... } }` (delete returns
   `{ "ok": true }`); errors are `{ "error": "..." }` with 400/404/500.
+<!-- FULL_AGENT_ONLY_END -->
 
 ## Sources
 
@@ -186,10 +198,11 @@ returned** — only names and whether `sessionid` is present. Use
 ## Install / update this skill
 
 If this skill is not yet in your skill library (or may be out of date), fetch
-the full content over the API and install it yourself:
+the content for the server's current API capabilities and install it yourself:
 
 - **Raw Markdown (recommended for installs):** `GET /api/skill.md` (or
-  `GET /api/skill?format=md`) returns this exact file, frontmatter included.
+  `GET /api/skill?format=md`) returns the currently served skill, frontmatter
+  included.
   Save it verbatim as `skills/feed-api/SKILL.md` in your skill directory.
 - **JSON envelope:** `GET /api/skill` returns `{ "name": "feed-api",
   "description": "...", "path": "skills/feed-api/SKILL.md", "content": "..." }`.
@@ -197,18 +210,23 @@ the full content over the API and install it yourself:
 - **CLI:** `node feed-cli.js skill --out skills/feed-api/SKILL.md` writes the
   file for you; `node feed-cli.js skill` prints the JSON envelope.
 
-The content you receive is the canonical copy — install it verbatim, including
-the YAML frontmatter at the top, and replace any older copy.
+The content you receive matches the server's current API capabilities. Install
+it verbatim, including the YAML frontmatter, and replace any older copy.
 
 ## Notes
 
 - `author`/`search` filters use fuzzy matching, not exact SQL.
 - The image endpoint serves JPEG/PNG/WebP bytes directly.
+<!-- FULL_AGENT_ONLY_START -->
 - `POST`/`PUT`/`DELETE` on `/api/sources*` manage sources and cookie values
   (see the settings page at `/settings/sources`).
 - Group mutations persist to `groups.json` and are picked up by the watcher on
   its next cycle — no restart needed.
+<!-- FULL_AGENT_ONLY_END -->
 - In `AUTO_RETENTION=2`, group responses include `retention_days`,
-  `effective_retention_days`, and `retention_inherited`. Set the global fallback
-  with `PUT /api/settings/retention` and `{ "image_retention_days": 30 }`.
+  `effective_retention_days`, and `retention_inherited`.
+<!-- FULL_AGENT_ONLY_START -->
+- Set the global fallback with `PUT /api/settings/retention` and
+  `{ "image_retention_days": 30 }`.
+<!-- FULL_AGENT_ONLY_END -->
 - Read the full contract with `GET /api/contract` before coding against it.

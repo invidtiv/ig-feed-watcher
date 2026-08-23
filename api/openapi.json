@@ -378,7 +378,7 @@
       "get": {
         "tags": ["skill"],
         "summary": "Get the self-installable agent skill for this API",
-        "description": "Returns the full feed-api agent skill so an agent can install or update it in its own skill library. The default response is a JSON envelope with `name`, `description`, `path`, and the complete `content` (the raw SKILL.md, frontmatter included). Request the raw Markdown with `?format=md`, `?format=markdown`, an `Accept: text/markdown` header, or the `/api/skill.md` alias.",
+        "description": "Returns the feed-api agent skill projected for the server's current API capabilities. The default response is a JSON envelope with `name`, `description`, `path`, and the served `content` (raw Markdown with frontmatter). Request the raw Markdown with `?format=md`, `?format=markdown`, an `Accept: text/markdown` header, or the `/api/skill.md` alias.",
         "parameters": [
           {
             "name": "format",
@@ -441,7 +441,7 @@
           "name": { "type": "string", "description": "Skill name (kebab-case, matches the skill's frontmatter)." },
           "description": { "type": "string", "description": "Skill description from the frontmatter." },
           "path": { "type": "string", "description": "Relative path of the SKILL.md within the app." },
-          "content": { "type": "string", "description": "The full SKILL.md content (frontmatter included) — install by writing it to skills/<name>/SKILL.md." }
+          "content": { "type": "string", "description": "The capability-specific SKILL.md content (frontmatter included) — install by writing it to skills/<name>/SKILL.md." }
         }
       },
       "Group": {

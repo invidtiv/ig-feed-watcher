@@ -176,7 +176,7 @@ curl -s 'http://localhost:4180/api/export' > feeds.json
 # The contract
 curl -s 'http://localhost:4180/api/contract'
 
-# The agent skill (JSON envelope: name, description, path, full content)
+# The capability-specific agent skill (JSON envelope: name, description, path, content)
 curl -s 'http://localhost:4180/api/skill'
 
 # The agent skill as raw Markdown — save it to install/update the skill

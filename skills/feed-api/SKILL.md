@@ -20,6 +20,8 @@ your own skill library — see [Install / update this skill](#install--update-th
   in the app folder (`%LOCALAPPDATA%\IG Feed Watcher`). It serves on port
   **4180**.
 - Set `FEED_API_URL` if the server is not at `http://127.0.0.1:4180`.
+- Mutation methods require `FULL_AGENT=1` on the server. Without it, the API
+  intentionally allows GET requests only and returns 405 for other methods.
 
 ## Quick start
 
@@ -72,7 +74,7 @@ curl -s 'http://127.0.0.1:4180/api/skill?format=md'
 | `GET /api/feeds/{shortcode}` | One post, metadata + `image` reference |
 | `GET /api/feeds/{shortcode}/image` | Raw image bytes for a post |
 | `GET /api/export` | Bulk JSON export of post metadata |
-| `GET /api/groups` | All groups with full details (accounts, keywords, hashtags, post counts) |
+| `GET /api/groups` | All groups with full details (accounts, keywords, hashtags, retention, post counts) |
 | `GET /api/groups/{id}` | One group's full details |
 | `POST /api/groups` | Create a group |
 | `PUT /api/groups/{id}` | Update a group (rename, recolor, replace lists) |
@@ -115,7 +117,7 @@ The detail endpoint (`/api/feeds/{shortcode}`) adds `image` (an object with `url
 ## Groups
 
 `GET /api/groups` returns every group with `id`, `name`, `color`, `accounts`,
-`keywords`, `hashtags`, `telegramThreadId`, and `post_count`. Use a group's
+`keywords`, `hashtags`, `retention_days`, `telegramThreadId`, and `post_count`. Use a group's
 `id` with `/api/groups/{id}/feeds` or the `--group`/`group` filter.
 
 ```json
@@ -128,6 +130,7 @@ The detail endpoint (`/api/feeds/{shortcode}`) adds `image` (an object with `url
       "accounts": ["mda_sc", "mda_brasil", "mdagovbr"],
       "keywords": ["Agricultura Familiar", "reforma agrária", "INCRA"],
       "hashtags": ["#agriculturafamiliar", "#reformaagraria"],
+      "retention_days": 30,
       "telegramThreadId": 1800,
       "post_count": 42
     }
@@ -153,11 +156,13 @@ Agents can fully manage groups through the API. `POST`/`PUT`/`DELETE` on
 Details and rules:
 
 - **Create** — `POST /api/groups` with `{ "name": "...", "color": "#hex",
-  "accounts": [...], "keywords": [...], "hashtags": [...] }`. Only `name` is
+  "accounts": [...], "keywords": [...], "hashtags": [...],
+  "retention_days": 30 }`. Only `name` is
   required (must be unique). A Telegram forum topic is created automatically
   when Telegram is configured.
 - **Update** — `PUT /api/groups/{id}` accepts any subset of `name`, `color`,
-  `accounts`, `keywords`, `hashtags`. **Providing `accounts`/`keywords`/
+  `accounts`, `keywords`, `hashtags`, `retention_days`. Set `retention_days`
+  to null to use the global value. **Providing `accounts`/`keywords`/
   `hashtags` REPLACES the whole list** — omit a field to leave it unchanged.
 - **Add/remove single items** — `POST /api/groups/{id}/add` and
   `POST /api/groups/{id}/remove` take `{ "type": "account" | "keyword" |

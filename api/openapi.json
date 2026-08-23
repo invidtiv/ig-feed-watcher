@@ -3,7 +3,7 @@
   "info": {
     "title": "IG Feed Watcher — Feed Data API",
     "version": "1.2.0",
-    "description": "Data contract for the IG Feed Watcher feed database. Provides all feeds, per-group feeds, individual posts with their image, sources/cookies management, full interest-group management (create, update, delete, and add/remove accounts, keywords, and hashtags per group), JSON metadata export, and the self-installable agent skill for this API."
+    "description": "Data contract for the IG Feed Watcher feed database. GET requests are always available; mutation methods require FULL_AGENT=1. Provides all feeds, per-group feeds, individual posts with their image, sources/cookies management, full interest-group management (including per-group image retention), JSON metadata export, and the self-installable agent skill for this API."
   },
   "servers": [
     {
@@ -13,7 +13,7 @@
   ],
   "tags": [
     { "name": "feeds", "description": "Feed posts stored in the database" },
-    { "name": "groups", "description": "Interest groups and their feeds; full group management (accounts, keywords, hashtags)" },
+    { "name": "groups", "description": "Interest groups and their feeds; full group management (accounts, keywords, hashtags, image retention)" },
     { "name": "sources", "description": "Ingestion sources (accounts) and their cookies" },
     { "name": "export", "description": "Bulk JSON export of post metadata" },
     { "name": "skill", "description": "The self-installable agent skill for this API" }
@@ -202,7 +202,7 @@
       "get": {
         "tags": ["groups"],
         "summary": "List interest groups with full details",
-        "description": "Returns every group with its id, name, color, 👤 accounts, 🔑 keywords, # hashtags, Telegram thread id, and live post_count.",
+        "description": "Returns every group with its id, name, color, 👤 accounts, 🔑 keywords, # hashtags, optional retention_days, Telegram thread id, and live post_count.",
         "responses": {
           "200": {
             "description": "All groups.",
@@ -234,7 +234,7 @@
       "get": {
         "tags": ["groups"],
         "summary": "Get one group with full details",
-        "description": "Returns a single group including its 👤 accounts, 🔑 keywords, # hashtags, and live post_count.",
+        "description": "Returns a single group including its 👤 accounts, 🔑 keywords, # hashtags, optional retention_days, and live post_count.",
         "parameters": [ { "$ref": "#/components/parameters/groupId" } ],
         "responses": {
           "200": {
@@ -425,6 +425,7 @@
           "accounts": { "type": "array", "items": { "type": "string" }, "description": "👤 Instagram account usernames this group watches." },
           "keywords": { "type": "array", "items": { "type": "string" }, "description": "🔑 Caption keywords this group matches." },
           "hashtags": { "type": "array", "items": { "type": "string" }, "description": "# Hashtags this group matches (kept with or without the leading #)." },
+          "retention_days": { "type": ["integer", "null"], "minimum": 1, "description": "Image retention override used when AUTO_RETENTION=2. Null or absent uses IMAGE_RETENTION_DAYS." },
           "telegramThreadId": { "type": ["integer", "null"], "description": "Telegram forum topic thread id for this group, when Telegram is configured." }
         }
       },
@@ -453,7 +454,8 @@
           "color": { "type": "string", "description": "Hex color, e.g. #6366f1. Defaults to #6366f1." },
           "accounts": { "type": "array", "items": { "type": "string" }, "description": "👤 Initial account usernames." },
           "keywords": { "type": "array", "items": { "type": "string" }, "description": "🔑 Initial keywords." },
-          "hashtags": { "type": "array", "items": { "type": "string" }, "description": "# Initial hashtags." }
+          "hashtags": { "type": "array", "items": { "type": "string" }, "description": "# Initial hashtags." },
+          "retention_days": { "type": ["integer", "null"], "minimum": 1, "description": "Per-group image retention override for AUTO_RETENTION=2." }
         }
       },
       "GroupUpdateInput": {
@@ -463,7 +465,8 @@
           "color": { "type": "string", "description": "New hex color." },
           "accounts": { "type": "array", "items": { "type": "string" }, "description": "Replaces the whole 👤 accounts list." },
           "keywords": { "type": "array", "items": { "type": "string" }, "description": "Replaces the whole 🔑 keywords list." },
-          "hashtags": { "type": "array", "items": { "type": "string" }, "description": "Replaces the whole # hashtags list." }
+          "hashtags": { "type": "array", "items": { "type": "string" }, "description": "Replaces the whole # hashtags list." },
+          "retention_days": { "type": ["integer", "null"], "minimum": 1, "description": "Sets the per-group image retention override; null removes it and uses the global value." }
         }
       },
       "GroupItemInput": {

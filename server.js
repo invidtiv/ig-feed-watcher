@@ -29,48 +29,15 @@ import {
   sourceToPublic,
   listIngesterTypes,
 } from './sources.js';
+import { createFullAgentGuard, loadRuntimePolicy } from './runtime-policy.js';
+import { runImageRetention } from './retention.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
 const DB_PATH = join(ROOT, 'posts.db');
 const SCREENSHOTS_DIR = join(ROOT, 'screenshots');
 const PORT = process.env.PORT || 4180;
-
-// Parse a simple .env-style file into a dict (KEY=VALUE lines, # comments).
-function parseEnvFile(filePath) {
-  if (!existsSync(filePath)) return null;
-  const content = readFileSync(filePath, 'utf-8');
-  const env = {};
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-    if (match) {
-      let val = match[2];
-      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-        val = val.slice(1, -1);
-      }
-      env[match[1]] = val;
-    }
-  }
-  return env;
-}
-
-// Resolve a config value: process env first, then the local .env.config file.
-// Returns undefined when the key is absent (or empty).
-function readEnvValue(key) {
-  if (process.env[key] !== undefined && process.env[key] !== '') return process.env[key];
-  const local = parseEnvFile(join(ROOT, '.env.config'));
-  if (local && local[key] !== undefined && local[key] !== '') return local[key];
-  return undefined;
-}
-
-// Multi-account capability. When MULTI_ACCOUNTS=1 is set in .env.config (or
-// the environment) the API allows connecting more than one Instagram account
-// (POST /api/sources). The web UI is single-account only for now — the
-// multi-account UI ships in a future release — but the backend capability must
-// stay fully functional for API/CLI use.
-const MULTI_ACCOUNTS = readEnvValue('MULTI_ACCOUNTS') === '1';
+const RUNTIME_POLICY = loadRuntimePolicy(ROOT);
 
 // ─── Database ─────────────────────────────────────────────────────────────────
 
@@ -200,6 +167,13 @@ function saveGroups(groups) {
 
 function sanitizeList(arr) {
   return Array.isArray(arr) ? arr.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim()) : [];
+}
+
+function parseGroupRetentionDays(value) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const days = Number(value);
+  return Number.isInteger(days) && days > 0 ? days : NaN;
 }
 
 // ─── Telegram ─────────────────────────────────────────────────────────────────
@@ -405,6 +379,9 @@ function queryPosts(query, opts = {}) {
 // ─── Express App ──────────────────────────────────────────────────────────────
 
 const app = express();
+// The explorer API is read-only unless explicitly promoted to a full agent.
+// Mount this before JSON parsing so rejected mutations are not processed.
+app.use('/api', createFullAgentGuard(RUNTIME_POLICY.fullAgent));
 app.use(express.json());
 app.use('/screenshots', express.static(SCREENSHOTS_DIR));
 
@@ -615,7 +592,7 @@ app.get('/api/groups/:id', (req, res) => {
 // Create a group
 app.post('/api/groups', async (req, res) => {
   try {
-    const { name, color, accounts, keywords, hashtags } = req.body;
+    const { name, color, accounts, keywords, hashtags, retention_days } = req.body;
     if (!name || typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ error: 'Group name is required' });
     }
@@ -624,6 +601,10 @@ app.post('/api/groups', async (req, res) => {
       return res.status(400).json({ error: 'A group with this name already exists' });
     }
     const groupColor = (typeof color === 'string' && color.match(/^#[0-9a-fA-F]{6}$/)) ? color : '#6366f1';
+    const retentionDays = parseGroupRetentionDays(retention_days);
+    if (Number.isNaN(retentionDays)) {
+      return res.status(400).json({ error: 'retention_days must be a positive whole number or null' });
+    }
     const group = {
       id: 'g_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       name: name.trim(),
@@ -632,6 +613,7 @@ app.post('/api/groups', async (req, res) => {
       keywords: sanitizeList(keywords),
       hashtags: sanitizeList(hashtags),
     };
+    if (retentionDays !== undefined && retentionDays !== null) group.retention_days = retentionDays;
 
     // Create Telegram forum topic for this group
     const threadId = await createTelegramTopic(group.name, groupColor);
@@ -654,12 +636,20 @@ app.put('/api/groups/:id', (req, res) => {
     const group = groups.find(g => g.id === req.params.id);
     if (!group) return res.status(404).json({ error: 'Group not found' });
 
-    const { name, color, accounts, keywords, hashtags } = req.body;
+    const { name, color, accounts, keywords, hashtags, retention_days } = req.body;
     if (name && typeof name === 'string' && name.trim()) group.name = name.trim();
     if (typeof color === 'string' && color.match(/^#[0-9a-fA-F]{6}$/)) group.color = color;
     if (accounts !== undefined) group.accounts = sanitizeList(accounts);
     if (keywords !== undefined) group.keywords = sanitizeList(keywords);
     if (hashtags !== undefined) group.hashtags = sanitizeList(hashtags);
+    if (retention_days !== undefined) {
+      const retentionDays = parseGroupRetentionDays(retention_days);
+      if (Number.isNaN(retentionDays)) {
+        return res.status(400).json({ error: 'retention_days must be a positive whole number or null' });
+      }
+      if (retentionDays === null) delete group.retention_days;
+      else group.retention_days = retentionDays;
+    }
 
     saveGroups(groups);
     res.json({ ok: true, group });
@@ -737,9 +727,9 @@ app.post('/api/sources', (req, res) => {
     if (!name || typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ error: 'Source name is required' });
     }
-    // Single-account mode (MULTI_ACCOUNTS not set to 1): only one source may
+    // Single-account mode (MULTI_ACCOUNT not set to 1): only one source may
     // exist. The API gate stays functional; the web UI is single-account only.
-    if (!MULTI_ACCOUNTS && listSources().length > 0) {
+    if (!RUNTIME_POLICY.multiAccount && listSources().length > 0) {
       return res.status(403).json({ error: 'Only one account can be connected in this version.' });
     }
     const source = upsertSource({ id, name: name.trim(), type, enabled, cookies });
@@ -1526,6 +1516,9 @@ const SETTINGS_PAGE = `<!DOCTYPE html>
     <label>Color
       <input type="color" id="new-group-color" class="color-input" value="#6366f1">
     </label>
+    ${RUNTIME_POLICY.retentionMode === 2 ? `<label>Image retention (days)
+      <input type="number" id="new-group-retention" min="1" step="1" placeholder="Global (${RUNTIME_POLICY.imageRetentionDays ?? 'unset'})">
+    </label>` : ''}
     <button class="add-btn" onclick="createGroup()">+ Create Group</button>
   </div>
 </div>
@@ -1536,6 +1529,7 @@ const SETTINGS_PAGE = `<!DOCTYPE html>
 
 <script>
 let groups = [];
+const retentionMode = ${RUNTIME_POLICY.retentionMode};
 
 async function loadGroups() {
   const res = await fetch('/api/groups');
@@ -1555,6 +1549,9 @@ function renderGroups() {
 
 function groupCardHtml(g) {
   const color = g.color || '#6366f1';
+  const retentionControl = retentionMode === 2
+    ? '<label>Image retention (days)<input type="number" id="edit-retention-' + g.id + '" min="1" step="1" placeholder="Use global" value="' + (g.retention_days || '') + '"></label>'
+    : '';
   return '<div class="group-card" id="card-' + g.id + '" style="border-left-color:' + color + '">' +
     '<div class="group-header">' +
       '<div class="group-title">' +
@@ -1593,10 +1590,11 @@ function groupCardHtml(g) {
         '<div class="tag-list" id="tags-hashtags-' + g.id + '"></div>' +
       '</div>' +
       '<div class="group-subsection">' +
-        '<h3>Rename / Recolor</h3>' +
+        '<h3>Group settings</h3>' +
         '<div class="new-group-form">' +
           '<label>Name<input type="text" id="edit-name-' + g.id + '" value="' + escapeHtml(g.name) + '"></label>' +
           '<label>Color<input type="color" id="edit-color-' + g.id + '" class="color-input" value="' + color + '"></label>' +
+          retentionControl +
           '<button class="add-btn" onclick="updateGroup(\\'' + g.id + '\\')">Save Changes</button>' +
         '</div>' +
       '</div>' +
@@ -1638,12 +1636,14 @@ function renderTagList(elId, items, groupId, type, prefix) {
 async function createGroup() {
   const name = document.getElementById('new-group-name').value.trim();
   const color = document.getElementById('new-group-color').value;
+  const retentionInput = document.getElementById('new-group-retention');
+  const retentionDays = retentionInput ? (retentionInput.value ? Number(retentionInput.value) : null) : undefined;
   if (!name) { showToast('Name is required', true); return; }
 
   const res = await fetch('/api/groups', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, color, accounts: [], keywords: [], hashtags: [] }),
+    body: JSON.stringify({ name, color, accounts: [], keywords: [], hashtags: [], retention_days: retentionDays }),
   });
   const result = await res.json();
   if (result.ok) {
@@ -1658,12 +1658,14 @@ async function createGroup() {
 async function updateGroup(groupId) {
   const name = document.getElementById('edit-name-' + groupId).value.trim();
   const color = document.getElementById('edit-color-' + groupId).value;
+  const retentionInput = document.getElementById('edit-retention-' + groupId);
+  const retentionDays = retentionInput ? (retentionInput.value ? Number(retentionInput.value) : null) : undefined;
   if (!name) { showToast('Name is required', true); return; }
 
   const res = await fetch('/api/groups/' + groupId, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, color }),
+    body: JSON.stringify({ name, color, retention_days: retentionDays }),
   });
   const result = await res.json();
   if (result.ok) {
@@ -2337,8 +2339,29 @@ loadTelegramSettings();
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
+function applyImageRetention() {
+  if (RUNTIME_POLICY.retentionMode === 0) return;
+  if (RUNTIME_POLICY.imageRetentionDays === null) {
+    console.error('Image retention is enabled but IMAGE_RETENTION_DAYS is not a positive whole number; cleanup skipped.');
+    return;
+  }
+  const result = runImageRetention({
+    db,
+    screenshotsDir: SCREENSHOTS_DIR,
+    groups: loadGroups(),
+    mode: RUNTIME_POLICY.retentionMode,
+    globalDays: RUNTIME_POLICY.imageRetentionDays,
+  });
+  console.log(`Image retention: checked ${result.checked}, expired ${result.expired}, deleted ${result.deleted}, missing ${result.missing}, errors ${result.errors}`);
+}
+
+applyImageRetention();
+const retentionTimer = setInterval(applyImageRetention, 24 * 60 * 60 * 1000);
+retentionTimer.unref();
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log('IG Feed Explorer running on port ' + PORT);
   console.log('Database: ' + DB_PATH);
   console.log('Screenshots: ' + SCREENSHOTS_DIR);
+  console.log('API mode: ' + (RUNTIME_POLICY.fullAgent ? 'full agent' : 'read-only (GET only)'));
 });

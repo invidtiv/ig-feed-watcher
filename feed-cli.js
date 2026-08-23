@@ -13,9 +13,9 @@
  *   node feed-cli.js groups
  *   node feed-cli.js group <id>
  *   node feed-cli.js group-create --name "Name" [--color #hex]
- *                          [--accounts a,b] [--keywords k1,k2] [--hashtags h1,h2]
+ *                          [--accounts a,b] [--keywords k1,k2] [--hashtags h1,h2] [--retention-days N]
  *   node feed-cli.js group-update <id> [--name "New Name"] [--color #hex]
- *                          [--accounts a,b] [--keywords k1,k2] [--hashtags h1,h2]
+ *                          [--accounts a,b] [--keywords k1,k2] [--hashtags h1,h2] [--retention-days N]
  *   node feed-cli.js group-delete <id>
  *   node feed-cli.js group-add <id> --type account|keyword|hashtag --value X
  *   node feed-cli.js group-remove <id> --type account|keyword|hashtag --value X
@@ -57,6 +57,7 @@ Group options:
   --accounts a,b         Replace the full 👤 accounts list (CSV).
   --keywords k1,k2       Replace the full 🔑 keywords list (CSV).
   --hashtags h1,h2       Replace the full # hashtags list (CSV).
+  --retention-days N     Per-group image retention in AUTO_RETENTION=2 mode.
   --type TYPE            Item list for add/remove: account|keyword|hashtag.
   --value X              Item value for add/remove.
 
@@ -169,6 +170,7 @@ async function main() {
           accounts: csv(flags.accounts),
           keywords: csv(flags.keywords),
           hashtags: csv(flags.hashtags),
+          retention_days: flags['retention-days'],
         },
       }), flags);
       break;
@@ -184,6 +186,7 @@ async function main() {
           accounts: flags.accounts !== undefined ? csv(flags.accounts) : undefined,
           keywords: flags.keywords !== undefined ? csv(flags.keywords) : undefined,
           hashtags: flags.hashtags !== undefined ? csv(flags.hashtags) : undefined,
+          retention_days: flags['retention-days'],
         },
       }), flags);
       break;

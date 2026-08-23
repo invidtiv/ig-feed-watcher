@@ -8,7 +8,8 @@
     "watch": "node watcher.js",
     "login": "node login.js",
     "post": "node poster.js",
-    "serve": "node post-server.js"
+    "serve": "node post-server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "express": "^4.22.2",

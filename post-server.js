@@ -25,9 +25,11 @@ import { existsSync, mkdirSync, readFileSync } from 'fs';
 import { join, dirname, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { postToInstagram } from './poster.js';
+import { createFullAgentGuard, loadRuntimePolicy } from './runtime-policy.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
+const RUNTIME_POLICY = loadRuntimePolicy(ROOT);
 
 const PORT = process.env.IG_POST_API_PORT || 4030;
 const HOST = '127.0.0.1'; // loopback bind — no public exposure
@@ -72,6 +74,8 @@ const upload = multer({
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 const app = express();
+// Reject mutations before JSON parsing or multipart upload writes any data.
+app.use(createFullAgentGuard(RUNTIME_POLICY.fullAgent));
 app.use(express.json());
 
 // ─── Logging ──────────────────────────────────────────────────────────────────
@@ -189,5 +193,6 @@ app.listen(PORT, HOST, () => {
   log(`    POST /post  (json: { imagePath, caption })`);
   log(`  Uploads:  ${CONFIG.uploadsDir}`);
   log(`  Cookies: ${CONFIG.cookiesFile}`);
+  log(`  Mode: ${RUNTIME_POLICY.fullAgent ? 'full agent' : 'read-only (GET only)'}`);
   log(`═══════════════════════════════════════════`);
 });

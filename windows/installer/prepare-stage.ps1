@@ -53,7 +53,7 @@ Write-Host "                     into: $Stage"
 # by its full path so robocopy can never copy the stage into itself.
 $ExcludeDirs = @(
     'node_modules', '.npm-cache', '.puppeteer-cache',
-    'dist', 'logs', 'screenshots', 'uploads', 'presentation'
+    'dist', 'logs', 'screenshots', 'uploads', 'presentation', 'future'
 )
 $ExcludeDirsFull = @(
     (Join-Path $RepoRoot '.git'),

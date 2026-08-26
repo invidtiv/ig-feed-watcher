@@ -4,11 +4,11 @@
 
 **Status:** Draft for commercial review
 
-**Client:** [Client name]
+**Client:** Innpact
 
-**Provider:** [Provider name]
+**Provider:** Tiago Santos
 
-**Effective date:** [Date]
+**Effective date:** 28/08/2026
 
 This document defines the IG Feed Watcher pilot and identifies capabilities that may be commissioned separately in the future.
 
@@ -35,9 +35,9 @@ The pilot includes:
 1. Installation and initial environment configuration on the designated workstation.
 2. The core workflow established during the original $150 technical spike.
 3. A concise operating guide covering the end-user workflow and basic operations.
-4. An initial post-installation support and verification window of **[number] days** to confirm operational stability.
+4. An initial post-installation support and verification window of **7 days** to confirm operational stability.
 
-The original $150 spike is referenced only as the technical baseline. It is not the price of this pilot unless the parties state that separately in writing.
+The original $150 spike is referenced only as the technical baseline. It is the price of this pilot.
 
 ### 3. Acceptance and verification
 
@@ -245,16 +245,16 @@ Authorized users may view a history of their submitted items, subject to the acc
 
 ### 4. Technical boundaries
 
-| Attribute | Proposed specification |
-| --- | --- |
-| Runtime environment | Supported Chromium-based browser |
-| Activation | Explicit user action on one selected post |
-| Data source | Information visible in the selected post's page DOM |
-| Data flow | LinkedIn page DOM → user review → authenticated Supabase submission |
-| LinkedIn write permissions | None; no messaging, posting, reacting, or account changes |
-| External destination | The designated company Supabase project only |
-| Automation | No background crawling, bulk extraction, or simulated user interaction |
-| Attribution | Each submission is tied to the authenticated staff member |
+| Attribute                  | Proposed specification                                                 |
+| -------------------------- | ---------------------------------------------------------------------- |
+| Runtime environment        | Supported Chromium-based browser                                       |
+| Activation                 | Explicit user action on one selected post                              |
+| Data source                | Information visible in the selected post's page DOM                    |
+| Data flow                  | LinkedIn page DOM → user review → authenticated Supabase submission    |
+| LinkedIn write permissions | None; no messaging, posting, reacting, or account changes              |
+| External destination       | The designated company Supabase project only                           |
+| Automation                 | No background crawling, bulk extraction, or simulated user interaction |
+| Attribution                | Each submission is tied to the authenticated staff member              |
 
 ### 5. Explicit exclusions
 
@@ -285,9 +285,9 @@ Changes to LinkedIn's page structure, browser extension policies, or Supabase re
 
 ## Sign-off
 
-| Party | Name | Signature | Date |
-| --- | --- | --- | --- |
-| Client |  |  |  |
-| Provider |  |  |  |
+| Party    | Name | Signature | Date |
+| -------- | ---- | --------- | ---- |
+| Client   |      |           |      |
+| Provider |      |           |      |
 
 > **Drafting note:** This document is a commercial and functional draft. The parties should review the licence, revocation, liability, privacy, platform-compliance, and governing-law terms before signature.

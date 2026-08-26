@@ -101,9 +101,17 @@ account with its own session cookies. For every enabled source it launches its
 own headless browser and scrapes that account's home feed. Every post is stamped
 with `source_id` / `source_name` so you can tell which account it came from.
 
-The **Sources** page shows one account's cookies and the Telegram alert
-settings. Sources are managed in `sources.json` (see `sources.example.json`
-for a template). You can manage them two ways:
+**Single-account by default.** The **Sources** page is single-account only:
+it shows one account's cookies and the Telegram alert settings. Multi-account
+ingestion is supported by the backend (set `MULTI_ACCOUNT=1` in `.env.config`
+to allow the API and watcher to use more than one account). With the default
+`MULTI_ACCOUNT=0`, the watcher runs only the first enabled account even if an
+existing `sources.json` contains more; the multi-account web UI is planned for
+a future release. The legacy `MULTI_ACCOUNTS` name remains accepted when the
+canonical singular variable is absent.
+
+Sources are configured in `sources.json` (see `sources.example.json` for a
+template). You can manage them two ways:
 
 1. **Web settings page** — open the Web Explorer, click **🔑 Sources**, paste
    the account's cookie JSON, and save the Telegram bot token + group chat ID.
@@ -121,12 +129,13 @@ The Web Explorer (`server.js`, port **4180**) exposes a feed data API plus a
 machine-readable OpenAPI contract. This is the programmatic way to read the
 database of all feeds, per-group feeds, and individual posts with their images.
 
-The API includes read methods for feeds, groups, and sources, plus the
-mutation methods for managing groups and sources. Rejected or unavailable
-methods return `405 Method Not Allowed`; the guard runs before JSON or
-multipart upload processing. The served OpenAPI contract is capability-aware:
-it omits every non-GET operation and mutation-only path when those capabilities
-are unavailable, and serves the complete contract when they are.
+The API is GET-only by default. Set `FULL_AGENT=1` to enable mutation methods
+(`POST`, `PUT`, `PATCH`, `DELETE`, and others) in both the feed API and the
+dedicated Instagram posting API. Rejected methods return `405 Method Not
+Allowed`; the guard runs before JSON or multipart upload processing. The served
+OpenAPI contract is capability-aware: read-only mode omits every non-GET
+operation and mutation-only path, while full-agent mode serves the complete
+contract.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -135,7 +144,7 @@ are unavailable, and serves the complete contract when they are.
 | `GET /api/feeds/{shortcode}` | One post + image reference |
 | `GET /api/feeds/{shortcode}/image` | Raw image bytes for a post |
 | `GET /api/export` | Bulk JSON export of post metadata |
-| `GET /api/groups` | All groups with full details (accounts, keywords, hashtags, post counts) |
+| `GET /api/groups` | All groups with full details (accounts, keywords, hashtags, retention, post counts) |
 | `GET /api/groups/{id}` | One group's full details |
 | `POST /api/groups` | Create a group |
 | `PUT /api/groups/{id}` | Update a group (rename, recolor, replace lists) |
@@ -183,7 +192,7 @@ node feed-cli.js export --out feeds.json
 node feed-cli.js groups
 node feed-cli.js group g_mr7u3k93
 node feed-cli.js group-create --name "New Group" --accounts alice,bob --keywords "agroecologia" --hashtags "#agroecologia"
-node feed-cli.js group-update g_mr7u3k93 --color "#26f50a"
+node feed-cli.js group-update g_mr7u3k93 --color "#26f50a" --retention-days 30
 node feed-cli.js group-add g_mr7u3k93 --type account --value carol
 node feed-cli.js group-remove g_mr7u3k93 --type keyword --value "agroecologia"
 node feed-cli.js group-delete g_mr7u3k93
@@ -201,6 +210,34 @@ An agent skill documenting this API lives in `skills/feed-api/SKILL.md` and is
 served live at `/api/skill` (JSON envelope) and `/api/skill.md` (raw Markdown),
 so an agent can fetch the full skill and install it into its own skill library
 without prior knowledge of this repo.
+
+## Automatic Image Retention
+
+Image retention removes expired screenshot files while preserving post and
+comment metadata. Configure it in `.env.config`:
+
+```dotenv
+# Disabled; images are kept indefinitely
+AUTO_RETENTION=0
+
+# One global rule for every image
+AUTO_RETENTION=1
+IMAGE_RETENTION_DAYS=30
+
+# Per-group rules, with the global value as fallback
+AUTO_RETENTION=2
+IMAGE_RETENTION_DAYS=30
+```
+
+In mode `2`, the **Groups** page shows each group's configured retention or its
+inherited global value. Set a positive whole-number `retention_days` there,
+through `POST /api/groups`, or through `PUT /api/groups/{id}`. Set the global
+`IMAGE_RETENTION_DAYS` value from **Sources & Cookies → Image retention**. A group with
+no override uses `IMAGE_RETENTION_DAYS`. An ungrouped image also uses the global
+value. When an image belongs to multiple groups, the longest applicable value
+wins. The watcher checks once per ingestion run; the explorer also checks on
+startup and every 24 hours. If the global day value is absent or invalid,
+cleanup is skipped safely.
 
 ## Feed Watcher Setup
 

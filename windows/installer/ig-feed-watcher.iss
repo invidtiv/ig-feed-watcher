@@ -30,7 +30,7 @@
 ; ═══════════════════════════════════════════════════════════════════════════
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.2.0"
+  #define MyAppVersion "1.5.0"
 #endif
 #define MyAppName "IG Feed Watcher"
 #define MyAppPublisher "IG Feed Watcher"

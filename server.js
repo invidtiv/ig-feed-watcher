@@ -1554,9 +1554,9 @@ const SETTINGS_PAGE = `<!DOCTYPE html>
     <label>Color
       <input type="color" id="new-group-color" class="color-input" value="#6366f1">
     </label>
-    <label id="new-group-retention-label" style="display:${RUNTIME_POLICY.retentionMode === 2 ? 'flex' : 'none'}">Image retention (days)
+    ${RUNTIME_POLICY.retentionMode === 2 ? `<label id="new-group-retention-label">Image retention (days)
       <input type="number" id="new-group-retention" min="1" step="1" placeholder="Use global (${RUNTIME_POLICY.imageRetentionDays ?? 'unset'})">
-    </label>
+    </label>` : ''}
     <button class="add-btn" onclick="createGroup()">+ Create Group</button>
   </div>
 </div>
@@ -1573,10 +1573,10 @@ let globalRetentionDays = ${RUNTIME_POLICY.imageRetentionDays ?? 'null'};
 async function loadGroups() {
   const [groupsRes, retentionRes] = await Promise.all([
     fetch('/api/groups'),
-    fetch('/api/settings/retention'),
+    retentionMode !== 0 ? fetch('/api/settings/retention') : Promise.resolve(null),
   ]);
   const data = await groupsRes.json();
-  const retention = await retentionRes.json();
+  const retention = retentionRes ? await retentionRes.json() : { auto_retention: 0, image_retention_days: null };
   groups = data.groups || [];
   retentionMode = retention.auto_retention;
   globalRetentionDays = retention.image_retention_days;
@@ -2083,7 +2083,7 @@ const SOURCES_PAGE = `<!DOCTYPE html>
 
 <div id="sources-list"></div>
 
-<div class="section" id="retention-section">
+${RUNTIME_POLICY.retentionMode !== 0 ? `<div class="section" id="retention-section">
   <h2>Image retention</h2>
   <div class="desc" id="retention-desc">Loading image-retention settings…</div>
   <div class="field-row">
@@ -2093,7 +2093,7 @@ const SOURCES_PAGE = `<!DOCTYPE html>
     <button class="add-btn" id="retention-save-btn" onclick="saveRetentionSettings()">💾 Save global retention</button>
   </div>
   <div class="hint" id="retention-current"></div>
-</div>
+</div>` : ''}
 
 <div class="section" id="telegram-section">
   <h2>Telegram alerts</h2>
@@ -2345,6 +2345,7 @@ async function loadTelegramSettings() {
 }
 
 async function loadRetentionSettings() {
+  if (!document.getElementById('retention-section')) return;
   const res = await fetch('/api/settings/retention');
   const data = await res.json();
   const input = document.getElementById('global-retention-days');

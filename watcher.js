@@ -77,6 +77,12 @@ const CONFIG = {
   detailScrapeDelayMs: 3000,        // minimum delay between post-detail requests
   detailScrapeForMatchedOnly: true, // only open detail pages for matched posts (or likely-truncated captions)
   rateLimitCooldownMs: 30 * 60 * 1000, // pause detail scraping for 30 min after a 429/error page
+  // Feed captions are stored at most this long. Instagram's own caption limit is
+  // 2200 characters, so this keeps the whole caption for every post that
+  // Instagram itself accepts. captionMayBeTruncated() uses the same value as its
+  // "this was cut off, go and fetch the detail page" threshold — the two MUST
+  // stay equal, or posts truncated at exactly the cap will never be re-fetched.
+  captionMaxChars: 2200,
 };
 
 let lastDetailRequestAt = 0;
@@ -90,7 +96,7 @@ function isErrorPageText(text) {
 
 function captionMayBeTruncated(caption) {
   if (!caption) return false;
-  return caption.length >= 500 || /…|\.{3,}|more\s*$/i.test(caption);
+  return caption.length >= CONFIG.captionMaxChars || /…|\.{3,}|more\s*$/i.test(caption);
 }
 
 async function throttleDetailRequest() {
@@ -718,7 +724,7 @@ async function scrapeFeed(page) {
 
   // Extract post data from the feed
   // Instagram feed posts are <article> elements containing <a> tags with /p/ links
-  const posts = await page.evaluate(() => {
+  const posts = await page.evaluate((captionMaxChars) => {
     const results = [];
 
     // Find all article elements (feed posts)
@@ -808,7 +814,7 @@ async function scrapeFeed(page) {
             }
           }
         }
-        const captionText = caption.slice(0, 500);
+        const captionText = caption.slice(0, captionMaxChars);
 
         // Image URLs — collect all img src within the article
         const imgs = article.querySelectorAll('img[src]');
@@ -839,7 +845,7 @@ async function scrapeFeed(page) {
     }
 
     return results;
-  });
+  }, CONFIG.captionMaxChars);
 
   // DEBUG: save full page screenshot
   if (CONFIG.debug) {

@@ -30,7 +30,7 @@
 ; ═══════════════════════════════════════════════════════════════════════════
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.5.0"
+  #define MyAppVersion "1.5.4"
 #endif
 #define MyAppName "IG Feed Watcher"
 #define MyAppPublisher "IG Feed Watcher"
@@ -66,8 +66,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#Stage}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\node.exe"; Parameters: "server.js"; WorkingDir: "{app}"; Comment: "Open the IG Feed Watcher web app (http://localhost:4180)"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\node.exe"; Parameters: "server.js"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\{#MyAppName}"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\windows\open-app.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\node.exe"; Flags: runminimized; Comment: "Open the IG Feed Watcher web app"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\windows\open-app.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\node.exe"; Flags: runminimized; Tasks: desktopicon
 
 [Run]
 ; Create .env.config from the template on first install (never ship real secrets).
@@ -75,7 +75,7 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Fil
 ; Register the 5-minute scheduled task (only if the checkbox was ticked).
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\windows\install-scheduled-task.ps1"""; Flags: runhidden; Tasks: schedtask
 ; Open the web app when the wizard finishes.
-Filename: "http://localhost:4180"; Description: "Open the IG Feed Watcher app"; Flags: nowait postinstall skipifsilent
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\windows\open-app.ps1"""; WorkingDir: "{app}"; Description: "Open the IG Feed Watcher app"; Flags: runhidden postinstall skipifsilent
 
 [UninstallRun]
 ; Remove the scheduled task on uninstall (ignore errors if it never existed).

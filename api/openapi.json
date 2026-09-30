@@ -341,7 +341,7 @@
       "get": {
         "tags": ["settings"],
         "summary": "Get image-retention settings",
-        "description": "Returns AUTO_RETENTION mode, the global IMAGE_RETENTION_DAYS value, and whether per-group overrides are active.",
+        "description": "Returns AUTO_RETENTION mode, the global IMAGE_RETENTION_DAYS value, and whether per-group overrides are active. Images past their retention are shrunk to 10% of each dimension, then deleted at twice the retention period.",
         "responses": {
           "200": {
             "description": "Current image-retention settings.",
@@ -562,6 +562,7 @@
           "image_urls": { "type": "array", "items": { "type": "string" } },
           "screenshot_path": { "type": ["string", "null"] },
           "screenshot_url": { "type": ["string", "null"], "description": "Relative URL of the screenshot." },
+          "screenshot_downsized": { "type": "integer", "enum": [0, 1], "description": "1 once image retention has shrunk the screenshot to 10% of each dimension." },
           "scraped_at": { "type": ["string", "null"] },
           "seen_at": { "type": ["string", "null"] },
           "matched_groups": { "type": "array", "items": { "$ref": "#/components/schemas/MatchedGroup" } },

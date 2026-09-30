@@ -2,11 +2,11 @@ FROM node:22-slim
 
 WORKDIR /app
 
-# The explorer only needs express — install it directly instead of running
+# The explorer only needs express (+ sharp for image retention) — install them directly instead of running
 # the full `npm ci` (which pulls puppeteer/Chromium and takes 10+ minutes).
 # package-lock.json is NOT used here on purpose: watcher tooling deps are
 # irrelevant for this container.
-RUN npm install --omit=dev --no-audit --no-fund express@^4.22.2
+RUN npm install --omit=dev --no-audit --no-fund express@^4.22.2 sharp@^0.35.5
 
 # Copy app files (runtime data — posts.db, screenshots, groups.json,
 # sources.json — is provided by bind mounts from docker-compose.yml)

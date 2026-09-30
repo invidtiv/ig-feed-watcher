@@ -83,6 +83,7 @@ db.exec(`
 try { db.exec("ALTER TABLE posts ADD COLUMN matched_groups TEXT DEFAULT '[]'"); } catch {}
 try { db.exec("ALTER TABLE posts ADD COLUMN source_id TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE posts ADD COLUMN source_name TEXT DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE posts ADD COLUMN screenshot_downsized INTEGER DEFAULT 0"); } catch {}
 // This index depends on source_id, so it must run after the ALTER migrations.
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_posts_source ON posts(source_id)"); } catch {}
 
@@ -1038,6 +1039,7 @@ const HTML_PAGE = `<!DOCTYPE html>
   .post-card:hover { transform: translateY(-2px); border-color: var(--accent); }
   .post-card.has-groups { border-color: var(--accent); }
   .post-card img { width: 100%; height: 280px; object-fit: cover; background: #111; }
+  .post-card img.thumb { object-fit: none; }
   .post-card .no-img { width: 100%; height: 280px; display: flex; align-items: center; justify-content: center; background: #111; color: var(--text-dim); font-size: 14px; }
   .post-card .info { padding: 12px 16px; }
   .post-card .author { font-weight: 600; color: var(--accent); font-size: 14px; }
@@ -1048,6 +1050,7 @@ const HTML_PAGE = `<!DOCTYPE html>
   .badge.reel { background: #e11d4820; color: #fb7185; }
   .badge.group { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
   .badge.comments { background: #6366f120; color: var(--accent-hover); }
+  .badge.thumb { background: #f59e0b20; color: #fbbf24; }
 
   /* Comments in modal */
   .comments-section { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
@@ -1071,6 +1074,7 @@ const HTML_PAGE = `<!DOCTYPE html>
   .modal-overlay.active { display: flex; }
   .modal { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); max-width: 600px; max-height: 90vh; overflow-y: auto; width: 90%; }
   .modal img { width: 100%; border-radius: var(--radius) var(--radius) 0 0; }
+  .modal img.thumb { width: auto; display: block; margin: 16px auto 0; border-radius: 0; }
   .modal .body { padding: 20px; }
   .modal .close { position: absolute; top: 16px; right: 16px; background: rgba(0,0,0,0.6); border: none; color: white; width: 36px; height: 36px; border-radius: 50%; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; }
   .modal .close:hover { background: rgba(0,0,0,0.8); }
@@ -1293,10 +1297,11 @@ async function reloadPosts() {
 
   grid.innerHTML = data.posts.map(p => {
     const img = p.screenshot_url
-      ? '<img src="' + p.screenshot_url + '" loading="lazy" onclick="openModal(&#39;'+p.shortcode+'&#39;)">'
+      ? '<img src="' + p.screenshot_url + '"' + (p.screenshot_downsized ? ' class="thumb"' : '') + ' loading="lazy" onclick="openModal(&#39;'+p.shortcode+'&#39;)">'
       : '<div class="no-img" onclick="openModal(&#39;'+p.shortcode+'&#39;)">No screenshot</div>';
     const badges = [
       p.is_reel ? '<span class="badge reel">Reel</span>' : '',
+      p.screenshot_downsized && p.screenshot_url ? '<span class="badge thumb" title="Image shrunk to 10% by retention">Thumbnail</span>' : '',
       groupBadges(p.matched_groups),
       p.comment_count > 0 ? '<span class="badge comments">💬 ' + p.comment_count + '</span>' : '',
     ].filter(b => b).join(' ');
@@ -1344,9 +1349,10 @@ async function openModal(shortcode) {
   const res = await fetch('/api/posts/' + shortcode);
   const p = await res.json();
 
-  const img = p.screenshot_url ? '<img src="' + p.screenshot_url + '">' : '';
+  const img = p.screenshot_url ? '<img src="' + p.screenshot_url + '"' + (p.screenshot_downsized ? ' class="thumb"' : '') + '>' : '';
   const badges = [
     p.is_reel ? '<span class="badge reel">Reel</span>' : '',
+    p.screenshot_downsized && p.screenshot_url ? '<span class="badge thumb" title="Image shrunk to 10% by retention">Thumbnail</span>' : '',
     groupBadges(p.matched_groups),
     p.comment_count > 0 ? '<span class="badge comments">💬 ' + p.comment_count + '</span>' : '',
   ].filter(b => b).join(' ');
@@ -2355,9 +2361,9 @@ async function loadRetentionSettings() {
   input.value = data.image_retention_days || '';
 
   if (data.auto_retention === 2) {
-    desc.textContent = 'AUTO_RETENTION=2: this is the fallback for all images. Each group can override it on the Groups page; an image in multiple groups keeps the longest retention.';
+    desc.textContent = 'AUTO_RETENTION=2: this is the fallback for all images. Each group can override it on the Groups page; an image in multiple groups keeps the longest retention. Expired images are shrunk to 10% of each dimension, then deleted at twice the retention period.';
   } else if (data.auto_retention === 1) {
-    desc.textContent = 'AUTO_RETENTION=1: this global value applies to every image.';
+    desc.textContent = 'AUTO_RETENTION=1: this global value applies to every image. Expired images are shrunk to 10% of each dimension, then deleted at twice the retention period.';
   } else {
     desc.textContent = 'Automatic retention is disabled. Set AUTO_RETENTION=1 or 2 in .env.config to activate this saved global value.';
   }
@@ -2460,25 +2466,25 @@ loadRetentionSettings();
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-function applyImageRetention() {
+async function applyImageRetention() {
   const retentionPolicy = loadRuntimePolicy(ROOT);
   if (retentionPolicy.retentionMode === 0) return;
   if (retentionPolicy.imageRetentionDays === null) {
     console.error('Image retention is enabled but IMAGE_RETENTION_DAYS is not a positive whole number; cleanup skipped.');
     return;
   }
-  const result = runImageRetention({
+  const result = await runImageRetention({
     db,
     screenshotsDir: SCREENSHOTS_DIR,
     groups: loadGroups(),
     mode: retentionPolicy.retentionMode,
     globalDays: retentionPolicy.imageRetentionDays,
   });
-  console.log(`Image retention: checked ${result.checked}, expired ${result.expired}, deleted ${result.deleted}, missing ${result.missing}, errors ${result.errors}`);
+  console.log(`Image retention: checked ${result.checked}, expired ${result.expired}, downsized ${result.downsized}, deleted ${result.deleted}, missing ${result.missing}, errors ${result.errors}`);
 }
 
-applyImageRetention();
-const retentionTimer = setInterval(applyImageRetention, 24 * 60 * 60 * 1000);
+applyImageRetention().catch(err => console.error('Image retention failed:', err.message));
+const retentionTimer = setInterval(() => applyImageRetention().catch(err => console.error('Image retention failed:', err.message)), 24 * 60 * 60 * 1000);
 retentionTimer.unref();
 
 app.listen(PORT, '0.0.0.0', () => {

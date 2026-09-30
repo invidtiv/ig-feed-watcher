@@ -159,6 +159,7 @@ function initDB() {
   try { db.exec("ALTER TABLE posts ADD COLUMN matched_groups TEXT DEFAULT '[]'"); } catch {}
   try { db.exec("ALTER TABLE posts ADD COLUMN source_id TEXT DEFAULT ''"); } catch {}
   try { db.exec("ALTER TABLE posts ADD COLUMN source_name TEXT DEFAULT ''"); } catch {}
+  try { db.exec("ALTER TABLE posts ADD COLUMN screenshot_downsized INTEGER DEFAULT 0"); } catch {}
   try { db.exec("CREATE INDEX IF NOT EXISTS idx_posts_source ON posts(source_id)"); } catch {}
   return db;
 }
@@ -1424,14 +1425,14 @@ async function runOnce() {
     if (runtimePolicy.imageRetentionDays === null) {
       log('WARNING: AUTO_RETENTION is enabled but IMAGE_RETENTION_DAYS is not a positive whole number; cleanup skipped');
     } else {
-      const retention = runImageRetention({
+      const retention = await runImageRetention({
         db,
         screenshotsDir: CONFIG.screenshotsDir,
         groups,
         mode: runtimePolicy.retentionMode,
         globalDays: runtimePolicy.imageRetentionDays,
       });
-      log(`Image retention: checked ${retention.checked}, expired ${retention.expired}, deleted ${retention.deleted}, missing ${retention.missing}, errors ${retention.errors}`);
+      log(`Image retention: checked ${retention.checked}, expired ${retention.expired}, downsized ${retention.downsized}, deleted ${retention.deleted}, missing ${retention.missing}, errors ${retention.errors}`);
     }
   }
 

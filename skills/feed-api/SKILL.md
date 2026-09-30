@@ -116,6 +116,7 @@ A post (`/api/feeds`, `/api/groups/{id}/feeds`) looks like:
   "priority_reasons": ["Florest: keyword …"],
   "image_urls": ["https://…"],
   "screenshot_url": "/screenshots/C1b2dEf.jpg",
+  "screenshot_downsized": 0,
   "matched_groups": [{ "id": "g_mr7u3k93", "name": "Florest", "color": "#26f50a", "reasons": ["…"] }],
   "source_id": "ig-primary",
   "source_name": "Primary Instagram",
@@ -223,6 +224,9 @@ it verbatim, including the YAML frontmatter, and replace any older copy.
 - Group mutations persist to `groups.json` and are picked up by the watcher on
   its next cycle — no restart needed.
 <!-- FULL_AGENT_ONLY_END -->
+- When image retention is on, an image past its retention is shrunk to 10% of
+  each dimension (`screenshot_downsized: 1`) and deleted at twice the retention
+  period (`screenshot_url` becomes `null`).
 - In `AUTO_RETENTION=2`, group responses include `retention_days`,
   `effective_retention_days`, and `retention_inherited`.
 <!-- FULL_AGENT_ONLY_START -->

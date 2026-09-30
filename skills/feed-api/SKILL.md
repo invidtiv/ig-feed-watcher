@@ -244,7 +244,8 @@ it verbatim, including the YAML frontmatter, and replace any older copy.
 
 ## Notes
 
-- `author`/`search` filters use fuzzy matching, not exact SQL.
+- `author`/`search` filters use fuzzy matching, not exact SQL. A `search` term
+  starting with `#` (e.g. `search=%23pronaf`) matches that exact hashtag only.
 - The image endpoint serves JPEG/PNG/WebP bytes directly.
 <!-- FULL_AGENT_ONLY_START -->
 - `POST`/`PUT`/`DELETE` on `/api/sources*` manage sources and cookie values

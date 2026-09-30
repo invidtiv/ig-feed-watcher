@@ -551,7 +551,7 @@
       "source": { "name": "source", "in": "query", "schema": { "type": "string" }, "description": "Filter by source_id." },
       "group": { "name": "group", "in": "query", "schema": { "type": "string" }, "description": "Filter by group id." },
       "author": { "name": "author", "in": "query", "schema": { "type": "string" }, "description": "Fuzzy-match author username." },
-      "search": { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Fuzzy-match caption text." },
+      "search": { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Fuzzy-match caption text. Terms starting with # match that exact hashtag (case- and accent-insensitive)." },
       "reel": { "name": "reel", "in": "query", "schema": { "type": "string", "enum": ["0", "1"] }, "description": "Filter photos (0) or reels (1)." },
       "date_from": { "name": "date_from", "in": "query", "schema": { "type": "string" }, "description": "Posts with timestamp >= this value." },
       "date_to": { "name": "date_to", "in": "query", "schema": { "type": "string" }, "description": "Posts with timestamp <= this value." },

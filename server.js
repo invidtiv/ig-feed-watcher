@@ -129,8 +129,14 @@ function fuzzyMatch(text, pattern) {
   if (searchWords.length === 0) return 1;
 
   const textWords = normText.split(/[^a-z0-9]+/).filter(w => w);
+  const textHashtags = normText.match(/#[a-z0-9_]+/g) || [];
 
   for (const sw of searchWords) {
+    // A #hashtag term matches that exact hashtag only (no prefix/fuzzy match).
+    if (sw.startsWith('#')) {
+      if (textHashtags.includes(sw)) continue;
+      return 0;
+    }
     if (normText.includes(sw)) continue;
     if (textWords.some(tw => tw.startsWith(sw))) continue;
     const maxDist = sw.length <= 3 ? 1 : 2;
@@ -1148,6 +1154,10 @@ const HTML_PAGE = `<!DOCTYPE html>
   .badge.group { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
   .badge.comments { background: #6366f120; color: var(--accent-hover); }
   .badge.thumb { background: #f59e0b20; color: #fbbf24; }
+  .hashtags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .hashtag { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #6366f115; color: var(--accent-hover); cursor: pointer; }
+  .hashtag:hover { background: #6366f140; }
+  .hashtag.more { background: none; color: var(--text-dim); cursor: default; }
 
   /* Comments in modal */
   .comments-section { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
@@ -1437,6 +1447,7 @@ async function reloadPosts() {
       '<div class="info">' +
         '<div class="author">@' + escapeHtml(p.author) + '</div>' +
         caption +
+        hashtagChips(p.caption, 6) +
         '<div class="meta">' + badges + time + '</div>' +
       '</div>' +
     '</div>';
@@ -1449,6 +1460,35 @@ async function reloadPosts() {
   pag.innerHTML = (hasPrev ? '<button onclick="prevPage()">← Previous</button>' : '<button disabled>← Previous</button>') +
     '<span style="align-self:center;color:var(--text-dim);font-size:14px">' + (currentOffset+1) + '–' + Math.min(currentOffset+LIMIT, currentTotal) + ' of ' + currentTotal + '</span>' +
     (hasNext ? '<button onclick="nextPage()">Next →</button>' : '<button disabled>Next →</button>');
+}
+
+// Unique hashtags in a caption, in order of appearance.
+function postHashtags(caption) {
+  const seen = new Set();
+  return ((caption || '').match(/#[\\p{L}\\p{N}_]+/gu) || []).filter(tag => {
+    const key = tag.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function hashtagChips(caption, max) {
+  const tags = postHashtags(caption);
+  if (tags.length === 0) return '';
+  const shown = max ? tags.slice(0, max) : tags;
+  return '<div class="hashtags">' +
+    shown.map(tag => '<span class="hashtag" title="Show posts with ' + escapeHtml(tag) + '" onclick="event.stopPropagation();filterByHashtag(this.textContent)">' + escapeHtml(tag) + '</span>').join('') +
+    (tags.length > shown.length ? '<span class="hashtag more">+' + (tags.length - shown.length) + '</span>' : '') +
+  '</div>';
+}
+
+function filterByHashtag(tag) {
+  document.getElementById('filter-search').value = tag;
+  document.getElementById('modal').classList.remove('active');
+  currentOffset = 0;
+  switchView('grid');
+  reloadPosts();
 }
 
 function prevPage() { currentOffset = Math.max(0, currentOffset - LIMIT); reloadPosts(); }
@@ -1532,7 +1572,7 @@ async function openModal(shortcode) {
     img +
     '<div class="body">' +
       '<div style="display:flex;justify-content:space-between;align-items:start">' +
-        '<div><div class="author" style="font-size:18px">@' + escapeHtml(p.author) + '</div>' + badges + '</div>' +
+        '<div><div class="author" style="font-size:18px">@' + escapeHtml(p.author) + '</div>' + badges + hashtagChips(p.caption) + '</div>' +
         '<a href="' + p.permalink + '" target="_blank" style="color:var(--accent);text-decoration:none;font-size:14px">Open on IG ↗</a>' +
       '</div>' +
       groupAssignHtml +

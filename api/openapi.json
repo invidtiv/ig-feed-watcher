@@ -17,7 +17,8 @@
     { "name": "sources", "description": "Ingestion sources (accounts) and their cookies" },
     { "name": "settings", "description": "Runtime settings exposed to the web settings pages" },
     { "name": "export", "description": "Bulk JSON export of post metadata" },
-    { "name": "skill", "description": "The self-installable agent skill for this API" }
+    { "name": "skill", "description": "The self-installable agent skill for this API" },
+    { "name": "ai", "description": "OpenRouter-powered questions about stored posts and interest-group suggestions" }
   ],
   "paths": {
     "/api/feeds": {
@@ -365,6 +366,143 @@
         }
       }
     },
+    "/api/settings/ai": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get AI (OpenRouter) settings",
+        "description": "Whether an OpenRouter API key is configured and which model is used. The key itself is never returned.",
+        "responses": {
+          "200": {
+            "description": "Current AI settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiSettings"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Set the OpenRouter API key and/or model",
+        "description": "Persists OPENROUTER_API_KEY and/or OPENROUTER_MODEL to .env.config. Blank or omitted fields keep their current value. Requires FULL_AGENT=1.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiSettingsInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved."
+          },
+          "400": {
+            "description": "A value contains whitespace or line breaks."
+          },
+          "405": {
+            "description": "API is read-only because FULL_AGENT is not 1."
+          }
+        }
+      }
+    },
+    "/api/ai/ask": {
+      "post": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Ask a question about stored posts",
+        "description": "Answers from the 80 most recent posts matching the optional filters (same meaning as /api/feeds), including top comments. With web=true, OpenRouter web search is enabled and web sources are returned as citations. Requires FULL_AGENT=1 and an OpenRouter API key.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiAskInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing question or OpenRouter API key not set."
+          },
+          "405": {
+            "description": "API is read-only because FULL_AGENT is not 1."
+          },
+          "502": {
+            "description": "OpenRouter returned an error."
+          }
+        }
+      }
+    },
+    "/api/ai/groups/{id}/suggest": {
+      "post": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Suggest group improvements",
+        "description": "Proposes accounts to follow plus keywords and hashtags to add, and current items to remove, based on the group's recent matched posts (and web search when web=true). Nothing is saved; apply accepted items with PUT /api/groups/{id}. Requires FULL_AGENT=1 and an OpenRouter API key.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/groupId"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiSuggestInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The suggestions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiSuggestions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "OpenRouter API key not set."
+          },
+          "404": {
+            "description": "Group not found."
+          },
+          "405": {
+            "description": "API is read-only because FULL_AGENT is not 1."
+          },
+          "502": {
+            "description": "OpenRouter returned an error or unreadable output."
+          }
+        }
+      }
+    },
     "/api/contract": {
       "get": {
         "tags": ["feeds"],
@@ -661,6 +799,242 @@
         "properties": {
           "sources": { "type": "array", "items": { "$ref": "#/components/schemas/Source" } },
           "ingesterTypes": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "AiSettings": {
+        "type": "object",
+        "properties": {
+          "keySet": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string"
+          },
+          "defaultModel": {
+            "type": "string"
+          }
+        }
+      },
+      "AiSettingsInput": {
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "example": "google/gemini-3.8-flash"
+          }
+        }
+      },
+      "AiAskInput": {
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "filters": {
+            "type": "object",
+            "description": "Optional post filters: group, source, author, search, reel, date_from, date_to.",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "web": {
+            "type": "boolean",
+            "default": false
+          },
+          "history": {
+            "type": "array",
+            "description": "Previous turns; the last 6 are used.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "assistant"
+                  ]
+                },
+                "content": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "AiAnswer": {
+        "type": "object",
+        "properties": {
+          "answer": {
+            "type": "string"
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "model": {
+            "type": "string"
+          },
+          "post_count": {
+            "type": "integer",
+            "description": "Posts sent to the model."
+          },
+          "total": {
+            "type": "integer",
+            "description": "Posts matching the filters."
+          }
+        }
+      },
+      "AiSuggestInput": {
+        "type": "object",
+        "properties": {
+          "web": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "AiSuggestions": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string"
+          },
+          "add": {
+            "type": "object",
+            "properties": {
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string",
+                      "description": "Instagram username without @"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "seen_in_feed": {
+                      "type": "boolean",
+                      "description": "Whether posts by this account are already in the database (only on add.accounts)."
+                    }
+                  }
+                }
+              },
+              "keywords": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "hashtags": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "remove": {
+            "type": "object",
+            "properties": {
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "keywords": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "hashtags": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "model": {
+            "type": "string"
+          },
+          "post_count": {
+            "type": "integer"
+          }
         }
       }
     }

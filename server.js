@@ -33,6 +33,15 @@ import { createFullAgentGuard, loadRuntimePolicy, writeConfigValue } from './run
 import { runImageRetention } from './retention.js';
 import { contractForCapabilities } from './contract-policy.js';
 import { skillForCapabilities } from './skill-policy.js';
+import {
+  DEFAULT_MODEL,
+  loadAiConfig,
+  postsToContext,
+  chat,
+  buildAskMessages,
+  buildSuggestMessages,
+  parseSuggestions,
+} from './ai.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -836,6 +845,94 @@ app.put('/api/settings/retention', (req, res) => {
   }
 });
 
+// ─── AI (OpenRouter) ──────────────────────────────────────────────────────────
+
+// How many of the most recent matching posts are sent to the model as context.
+const AI_CONTEXT_POSTS = 80;
+const AI_FILTER_KEYS = ['group', 'source', 'author', 'search', 'reel', 'date_from', 'date_to'];
+
+function aiCommentsFor(shortcode) {
+  return db.prepare('SELECT author, text FROM comments WHERE shortcode = ? ORDER BY like_count DESC LIMIT 3')
+    .all(shortcode);
+}
+
+function sendAiError(res, err) {
+  res.status(err.status || 500).json({ error: err.message });
+}
+
+app.get('/api/settings/ai', (req, res) => {
+  const ai = loadAiConfig(ROOT);
+  // Never return the API key to the browser — only whether it is set.
+  res.json({ keySet: !!ai.apiKey, model: ai.model, defaultModel: DEFAULT_MODEL });
+});
+
+app.put('/api/settings/ai', (req, res) => {
+  try {
+    const { apiKey, model } = req.body || {};
+    for (const [label, value] of [['API key', apiKey], ['Model', model]]) {
+      if (typeof value === 'string' && /\s/.test(value.trim())) {
+        return res.status(400).json({ error: `${label} must not contain spaces or line breaks` });
+      }
+    }
+    if (typeof apiKey === 'string' && apiKey.trim()) writeConfigValue(ROOT, 'OPENROUTER_API_KEY', apiKey.trim());
+    if (typeof model === 'string' && model.trim()) writeConfigValue(ROOT, 'OPENROUTER_MODEL', model.trim());
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Answer a question about the posts matching the explorer filters.
+app.post('/api/ai/ask', async (req, res) => {
+  try {
+    const { question, filters, history, web } = req.body || {};
+    if (typeof question !== 'string' || !question.trim()) {
+      return res.status(400).json({ error: 'question is required' });
+    }
+    const query = { limit: AI_CONTEXT_POSTS, offset: 0 };
+    for (const key of AI_FILTER_KEYS) {
+      if (typeof filters?.[key] === 'string' && filters[key]) query[key] = filters[key];
+    }
+    const { posts, total } = queryPosts(query);
+    const messages = buildAskMessages({
+      question: question.trim(),
+      context: postsToContext(posts, aiCommentsFor),
+      postCount: posts.length,
+      total,
+      history,
+      web: web === true,
+    });
+    const result = await chat({ ...loadAiConfig(ROOT), messages, web: web === true });
+    res.json({
+      answer: result.content,
+      citations: result.citations,
+      model: result.model,
+      post_count: posts.length,
+      total,
+    });
+  } catch (err) { sendAiError(res, err); }
+});
+
+// Propose accounts/keywords/hashtags to add to (or remove from) a group.
+// Nothing is saved here — the UI applies accepted items via PUT /api/groups/:id.
+app.post('/api/ai/groups/:id/suggest', async (req, res) => {
+  try {
+    const group = loadGroups().find(g => g.id === req.params.id);
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+    const web = req.body?.web === true;
+    const { posts } = queryPosts({ group: group.id, limit: AI_CONTEXT_POSTS, offset: 0 });
+    const messages = buildSuggestMessages({
+      group,
+      context: postsToContext(posts, aiCommentsFor),
+      postCount: posts.length,
+      web,
+    });
+    const result = await chat({ ...loadAiConfig(ROOT), messages, web });
+    const suggestions = parseSuggestions(result.content, group);
+    const seenAuthor = db.prepare('SELECT 1 FROM posts WHERE author = ? LIMIT 1');
+    for (const item of suggestions.add.accounts) item.seen_in_feed = !!seenAuthor.get(item.value);
+    res.json({ ...suggestions, citations: result.citations, model: result.model, post_count: posts.length });
+  } catch (err) { sendAiError(res, err); }
+});
+
 // ─── Feeds API (the data contract) ────────────────────────────────────────────
 
 // All feeds, with optional filters (source, group, author, search, reel, dates)
@@ -1097,6 +1194,22 @@ const HTML_PAGE = `<!DOCTYPE html>
   .toggle-row button { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; }
   .toggle-row button.active { background: var(--accent); border-color: var(--accent); }
   .timestamp { font-family: monospace; font-size: 11px; }
+
+  /* Ask AI */
+  .ai-panel { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 24px; }
+  .ai-panel h3 { font-size: 14px; margin-bottom: 4px; color: var(--text-dim); text-transform: uppercase; }
+  .ai-panel .ai-hint { font-size: 12px; color: var(--text-dim); margin-bottom: 12px; }
+  .ai-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .ai-row textarea { flex: 1; min-width: 240px; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 8px; font-size: 14px; font-family: inherit; resize: vertical; }
+  .ai-row textarea:focus { outline: none; border-color: var(--accent); }
+  .ai-row label { font-size: 13px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .ai-log:not(:empty) { margin-bottom: 12px; max-height: 480px; overflow-y: auto; }
+  .ai-msg { padding: 10px 12px; border-radius: 8px; margin-bottom: 8px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
+  .ai-msg.user { background: var(--bg); border: 1px solid var(--border); }
+  .ai-msg.assistant { background: #6366f115; border: 1px solid #6366f140; }
+  .ai-msg.error { background: #ef444415; border: 1px solid #ef444440; color: #fca5a5; }
+  .ai-msg .ai-meta { font-size: 11px; color: var(--text-dim); margin-top: 6px; white-space: normal; }
+  .ai-msg .ai-meta a { color: var(--accent-hover); }
 </style>
 </head>
 <body>
@@ -1155,6 +1268,18 @@ const HTML_PAGE = `<!DOCTYPE html>
     </label>
     <button class="filter-btn" onclick="reloadPosts()">Apply</button>
     <button class="filter-btn" style="background:var(--card);border:1px solid var(--border)" onclick="clearFilters()">Clear</button>
+  </div>
+
+  <div class="ai-panel" id="ai-panel">
+    <h3>🤖 Ask AI</h3>
+    <div class="ai-hint">Questions are answered from the most recent posts matching the filters above. Enter to send, Shift+Enter for a new line.</div>
+    <div class="ai-log" id="ai-log"></div>
+    <div class="ai-row">
+      <textarea id="ai-question" rows="2" placeholder="e.g. What are these accounts announcing this week?" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();askAi()}"></textarea>
+      <label><input type="checkbox" id="ai-web"> Search the web</label>
+      <button class="filter-btn" id="ai-send" onclick="askAi()">Ask</button>
+      <button class="filter-btn" style="background:var(--card);border:1px solid var(--border)" onclick="clearAi()">New chat</button>
+    </div>
   </div>
 
   <div class="posts-grid" id="posts-grid"></div>
@@ -1462,6 +1587,63 @@ function escapeHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// ─── Ask AI ───
+let aiHistory = [];
+
+function aiMessageHtml(role, text, meta) {
+  return '<div class="ai-msg ' + role + '">' + escapeHtml(text) + (meta ? '<div class="ai-meta">' + meta + '</div>' : '') + '</div>';
+}
+
+async function askAi() {
+  const input = document.getElementById('ai-question');
+  const question = input.value.trim();
+  if (!question) return;
+  const log = document.getElementById('ai-log');
+  const send = document.getElementById('ai-send');
+  const filters = Object.fromEntries(getFilters());
+  delete filters.limit;
+  delete filters.offset;
+  const web = document.getElementById('ai-web').checked;
+
+  log.insertAdjacentHTML('beforeend', aiMessageHtml('user', question));
+  log.insertAdjacentHTML('beforeend', '<div class="ai-msg assistant" id="ai-pending">Thinking…</div>');
+  log.scrollTop = log.scrollHeight;
+  input.value = '';
+  send.disabled = true;
+  try {
+    const res = await fetch('/api/ai/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, filters, web, history: aiHistory }),
+    });
+    const data = await res.json();
+    document.getElementById('ai-pending').remove();
+    if (!res.ok) {
+      log.insertAdjacentHTML('beforeend', aiMessageHtml('error', data.error || 'Request failed',
+        res.status === 400 && /API key/.test(data.error || '') ? '<a href="/settings/sources">Open Sources settings →</a>' : ''));
+      return;
+    }
+    aiHistory.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer });
+    const sources = (data.citations || []).map(c =>
+      '<a href="' + escapeHtml(c.url) + '" target="_blank" rel="noopener">' + escapeHtml(c.title) + '</a>').join(' · ');
+    const meta = 'Based on ' + data.post_count + ' of ' + data.total + ' matching posts · ' + escapeHtml(data.model) +
+      (sources ? '<br>Web sources: ' + sources : '');
+    log.insertAdjacentHTML('beforeend', aiMessageHtml('assistant', data.answer, meta));
+  } catch (err) {
+    const pending = document.getElementById('ai-pending');
+    if (pending) pending.remove();
+    log.insertAdjacentHTML('beforeend', aiMessageHtml('error', 'Request failed: ' + err.message));
+  } finally {
+    send.disabled = false;
+    log.scrollTop = log.scrollHeight;
+  }
+}
+
+function clearAi() {
+  aiHistory = [];
+  document.getElementById('ai-log').innerHTML = '';
+}
+
 // Init
 loadGroupsCache().then(reloadPosts);
 </script>
@@ -1538,6 +1720,21 @@ const SETTINGS_PAGE = `<!DOCTYPE html>
   .new-group-form input:focus { outline:none; border-color:var(--accent); }
   .new-group-form .name-input { min-width:200px; }
   .color-input { width:60px; height:38px; border:1px solid var(--border); border-radius:8px; background:var(--bg); cursor:pointer; }
+
+  /* AI suggestions */
+  .ai-controls { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:8px; }
+  .ai-controls label { font-size:13px; color:var(--text-dim); display:flex; align-items:center; gap:6px; cursor:pointer; }
+  .ai-summary { font-size:13px; margin:8px 0; line-height:1.5; }
+  .ai-list h4 { font-size:12px; color:var(--text-dim); margin:10px 0 4px; }
+  .ai-item { display:flex; gap:8px; align-items:baseline; font-size:13px; padding:4px 0; cursor:pointer; }
+  .ai-item input { accent-color:var(--accent); }
+  .ai-item .ai-reason { color:var(--text-dim); }
+  .ai-item .ai-badge { font-size:10px; padding:1px 6px; border-radius:4px; white-space:nowrap; }
+  .ai-item .ai-badge.ok { background:#10b98120; color:var(--green); }
+  .ai-item .ai-badge.warn { background:#f59e0b20; color:#fbbf24; }
+  .ai-item.remove b { color:#fca5a5; text-decoration:line-through; }
+  .ai-sources { font-size:11px; color:var(--text-dim); margin-top:8px; }
+  .ai-sources a { color:var(--accent-hover); }
 </style>
 </head>
 <body>
@@ -1620,11 +1817,20 @@ function groupCardHtml(g) {
         retentionBadge +
       '</div>' +
       '<div class="group-actions">' +
+        '<button onclick="suggestAi(\\'' + g.id + '\\')">✨ AI</button>' +
         '<button onclick="toggleExpand(\\'' + g.id + '\\')">Edit</button>' +
         '<button class="delete-btn" onclick="deleteGroup(\\'' + g.id + '\\')">Delete</button>' +
       '</div>' +
     '</div>' +
     '<div class="group-body">' +
+      '<div class="group-subsection">' +
+        '<h3>✨ AI suggestions</h3>' +
+        '<div class="ai-controls">' +
+          '<button class="add-btn" id="ai-run-' + g.id + '" onclick="suggestAi(\\'' + g.id + '\\')">Suggest improvements</button>' +
+          '<label><input type="checkbox" id="ai-web-' + g.id + '" checked> Search the web (finds accounts to follow)</label>' +
+        '</div>' +
+        '<div id="ai-results-' + g.id + '"></div>' +
+      '</div>' +
       '<div class="group-subsection">' +
         '<h3>👤 Accounts</h3>' +
         '<div class="add-row">' +
@@ -1669,6 +1875,106 @@ function toggleExpand(groupId) {
   } else {
     card.classList.add('expanded');
     renderGroupTags(groupId);
+  }
+}
+
+const AI_FIELDS = [
+  { field: 'accounts', label: '👤 Accounts', prefix: '@' },
+  { field: 'keywords', label: '🔑 Keywords', prefix: '' },
+  { field: 'hashtags', label: '# Hashtags', prefix: '' },
+];
+
+async function suggestAi(groupId) {
+  const card = document.getElementById('card-' + groupId);
+  if (!card.classList.contains('expanded')) toggleExpand(groupId);
+  const out = document.getElementById('ai-results-' + groupId);
+  const button = document.getElementById('ai-run-' + groupId);
+  const web = document.getElementById('ai-web-' + groupId).checked;
+  out.innerHTML = '<div class="empty-tags">Asking the AI' + (web ? ' (with web search)' : '') + '… this can take up to a minute.</div>';
+  button.disabled = true;
+  try {
+    const res = await fetch('/api/ai/groups/' + groupId + '/suggest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ web }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      out.innerHTML = '<div class="empty-tags" style="color:var(--red)">' + escapeHtml(data.error || 'Request failed') +
+        (/API key/.test(data.error || '') ? ' <a href="/settings/sources" style="color:var(--accent)">Open Sources settings →</a>' : '') + '</div>';
+      return;
+    }
+    out.innerHTML = aiSuggestionsHtml(groupId, data);
+  } catch (err) {
+    out.innerHTML = '<div class="empty-tags" style="color:var(--red)">Request failed: ' + escapeHtml(err.message) + '</div>';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function aiItemHtml(action, field, prefix, item) {
+  let badge = '';
+  if (field === 'accounts' && action === 'add') {
+    badge = item.seen_in_feed
+      ? '<span class="ai-badge ok">seen in feed</span>'
+      : '<span class="ai-badge warn">check on Instagram</span>';
+  }
+  return '<label class="ai-item ' + action + '">' +
+    '<input type="checkbox" data-action="' + action + '" data-field="' + field + '" data-value="' + escapeHtml(item.value) + '"' + (action === 'add' ? ' checked' : '') + '>' +
+    '<b>' + escapeHtml(prefix + item.value) + '</b>' + badge +
+    '<span class="ai-reason">' + escapeHtml(item.reason) + '</span>' +
+  '</label>';
+}
+
+function aiSuggestionsHtml(groupId, data) {
+  let html = data.summary ? '<div class="ai-summary">' + escapeHtml(data.summary) + '</div>' : '';
+  let count = 0;
+  for (const action of ['add', 'remove']) {
+    for (const f of AI_FIELDS) {
+      const items = (data[action] && data[action][f.field]) || [];
+      if (items.length === 0) continue;
+      count += items.length;
+      html += '<div class="ai-list"><h4>' + (action === 'add' ? 'Add ' : 'Remove ') + f.label + '</h4>' +
+        items.map(item => aiItemHtml(action, f.field, f.prefix, item)).join('') + '</div>';
+    }
+  }
+  if (count === 0) return html + '<div class="empty-tags">No changes suggested.</div>';
+  html += '<div class="ai-controls" style="margin-top:12px"><button class="add-btn" onclick="applyAiSuggestions(\\'' + groupId + '\\')">Apply selected</button></div>';
+  const sources = (data.citations || []).map(c =>
+    '<a href="' + escapeHtml(c.url) + '" target="_blank" rel="noopener">' + escapeHtml(c.title) + '</a>').join(' · ');
+  html += '<div class="ai-sources">Based on ' + data.post_count + ' recent posts · ' + escapeHtml(data.model) +
+    (sources ? '<br>Web sources: ' + sources : '') + '</div>';
+  return html;
+}
+
+async function applyAiSuggestions(groupId) {
+  const g = groups.find(x => x.id === groupId);
+  if (!g) return;
+  const checked = document.querySelectorAll('#ai-results-' + groupId + ' input[type=checkbox]:checked');
+  if (checked.length === 0) { showToast('Nothing selected', true); return; }
+  const lists = {};
+  for (const f of AI_FIELDS) lists[f.field] = (g[f.field] || []).slice();
+  checked.forEach(input => {
+    const list = lists[input.dataset.field];
+    const value = input.dataset.value;
+    if (input.dataset.action === 'add') {
+      if (!list.includes(value)) list.push(value);
+    } else {
+      lists[input.dataset.field] = list.filter(v => v !== value);
+    }
+  });
+  const res = await fetch('/api/groups/' + groupId, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(lists),
+  });
+  const result = await res.json();
+  if (result.ok) {
+    showToast(checked.length + ' change(s) applied');
+    await loadGroups();
+    toggleExpand(groupId);
+  } else {
+    showToast('Error: ' + (result.error || 'failed'), true);
   }
 }
 
@@ -2121,6 +2427,26 @@ ${RUNTIME_POLICY.retentionMode !== 0 ? `<div class="section" id="retention-secti
   <div class="hint" id="tg-current"></div>
 </div>
 
+<div class="section" id="ai-section">
+  <h2>AI assistant (OpenRouter)</h2>
+  <div class="desc">
+    Powers <b>Ask AI</b> in the Explorer and <b>✨ AI suggestions</b> on the
+    Groups page. Create a key at <b>openrouter.ai/keys</b> and paste it below.
+    The key is stored in .env.config and is never shown again. Leave a field
+    blank to keep its current value.
+  </div>
+  <div class="field-row">
+    <label>OpenRouter API key
+      <input type="password" id="ai-key" autocomplete="off" placeholder="sk-or-v1-...">
+    </label>
+    <label>Model
+      <input type="text" id="ai-model" placeholder="${DEFAULT_MODEL}">
+    </label>
+    <button class="add-btn" onclick="saveAiSettings()">💾 Save AI settings</button>
+  </div>
+  <div class="hint" id="ai-current"></div>
+</div>
+
 <div class="section">
   <h2>Data API &amp; Contract</h2>
   <div class="desc">Programmatic access to the feed database. The full OpenAPI contract is served at <code>/api/contract</code>.</div>
@@ -2424,6 +2750,35 @@ async function saveTelegram() {
   }
 }
 
+async function loadAiSettings() {
+  const res = await fetch('/api/settings/ai');
+  const data = await res.json();
+  document.getElementById('ai-current').textContent = (data.keySet
+    ? 'API key is set.'
+    : 'API key not set yet — Ask AI and AI suggestions stay disabled until you save one here.')
+    + ' Model: ' + data.model + (data.model === data.defaultModel ? ' (default)' : '');
+}
+
+async function saveAiSettings() {
+  const apiKey = document.getElementById('ai-key').value.trim();
+  const model = document.getElementById('ai-model').value.trim();
+  if (!apiKey && !model) { showToast('Enter an API key and/or a model', true); return; }
+  const res = await fetch('/api/settings/ai', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ apiKey, model }),
+  });
+  const result = await res.json();
+  if (result.ok) {
+    document.getElementById('ai-key').value = '';
+    document.getElementById('ai-model').value = '';
+    showToast('AI settings saved');
+    loadAiSettings();
+  } else {
+    showToast('Error: ' + (result.error || 'failed'), true);
+  }
+}
+
 function showToast(msg, isError) {
   const toast = document.getElementById('toast');
   toast.textContent = msg;
@@ -2459,6 +2814,7 @@ function escapeHtml(str) {
 // Init
 loadSources();
 loadTelegramSettings();
+loadAiSettings();
 loadRetentionSettings();
 </script>
 </body>

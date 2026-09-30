@@ -81,6 +81,7 @@ curl -s 'http://127.0.0.1:4180/api/skill?format=md'
 | `GET /api/groups/{id}` | One group's full details |
 | `GET /api/sources` | Ingestion sources (cookie values masked) |
 | `GET /api/settings/retention` | Current automatic/global image-retention settings |
+| `GET /api/settings/ai` | Whether an OpenRouter API key is set, and the model in use |
 | `GET /api/contract` | The OpenAPI data contract |
 | `GET /api/skill` | This skill, as a JSON envelope or raw Markdown (`?format=md`, `/api/skill.md`) |
 
@@ -95,6 +96,9 @@ Mutation endpoints available in full-agent mode:
 | `POST /api/groups/{id}/add` | Add one account/keyword/hashtag to a group |
 | `POST /api/groups/{id}/remove` | Remove one account/keyword/hashtag from a group |
 | `PUT /api/settings/retention` | Set global `image_retention_days` (`FULL_AGENT=1`) |
+| `PUT /api/settings/ai` | Set the OpenRouter `apiKey` and/or `model` |
+| `POST /api/ai/ask` | Ask a question about stored posts (optionally with web search) |
+| `POST /api/ai/groups/{id}/suggest` | Suggest accounts/keywords/hashtags to add to or remove from a group |
 <!-- FULL_AGENT_ONLY_END -->
 
 Common filters (query params): `group`, `source`, `author`, `search`, `reel=0|1`,
@@ -187,6 +191,30 @@ Details and rules:
   `GET /api/groups` (or `GET /api/groups/{id}`) response.
 - All mutation responses are `{ "ok": true, "group": { ... } }` (delete returns
   `{ "ok": true }`); errors are `{ "error": "..." }` with 400/404/500.
+<!-- FULL_AGENT_ONLY_END -->
+
+<!-- FULL_AGENT_ONLY_START -->
+## AI (OpenRouter)
+
+Both endpoints need an OpenRouter API key (`GET /api/settings/ai` → `keySet`)
+and return 400 without one, 502 when OpenRouter fails. Calls are billed to
+that key; `"web": true` adds live web search (more expensive).
+
+```bash
+# Ask about the 80 most recent posts matching the filters (same as /api/feeds)
+curl -s -X POST http://localhost:4180/api/ai/ask -H 'Content-Type: application/json' \
+  -d '{"question":"What are these accounts announcing?","filters":{"group":"g_mr7u3k93"},"web":false}'
+# → { "answer", "citations": [{url,title}], "model", "post_count", "total" }
+
+# Suggestions for a group — nothing is saved
+curl -s -X POST http://localhost:4180/api/ai/groups/g_mr7u3k93/suggest \
+  -H 'Content-Type: application/json' -d '{"web":true}'
+# → { "summary", "add": {accounts,keywords,hashtags}, "remove": {...}, "citations", ... }
+```
+
+Each suggestion is `{ "value", "reason" }`; `add.accounts` items also carry
+`seen_in_feed`. Apply the accepted ones with `PUT /api/groups/{id}` (full
+lists) or `POST /api/groups/{id}/add` / `remove`.
 <!-- FULL_AGENT_ONLY_END -->
 
 ## Sources

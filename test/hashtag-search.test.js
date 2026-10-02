@@ -13,7 +13,7 @@ const repo = resolve(process.env.IG_TEST_ROOT || fileURLToPath(new URL('..', imp
 
 test('searching for a #hashtag matches that exact hashtag only', async () => {
   const root = mkdtempSync(join(tmpdir(), 'ig-hashtag-'));
-  for (const file of ['server.js', 'sources.js', 'runtime-policy.js', 'retention.js', 'contract-policy.js', 'skill-policy.js', 'ai.js', 'package.json']) {
+  for (const file of ['server.js', 'sources.js', 'runtime-policy.js', 'retention.js', 'contract-policy.js', 'skill-policy.js', 'ai.js', 'group-match.js', 'package.json']) {
     copyFileSync(join(repo, file), join(root, file));
   }
   symlinkSync(join(repo, 'node_modules'), join(root, 'node_modules'), 'junction');

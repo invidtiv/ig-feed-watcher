@@ -126,6 +126,123 @@
         }
       }
     },
+    "/api/groups/{id}/rescan": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/groupId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Preview matching past posts",
+        "description": "Groups are matched when a post is scraped. Applies the group's current accounts/keywords/hashtags to all stored posts and reports those that match but are not in the group yet (sample: newest 20). Nothing is changed.",
+        "responses": {
+          "200": {
+            "description": "Preview.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PastMatchSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group not found."
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Tag matching past posts",
+        "description": "Adds the group (with its match reasons) to every stored post its current criteria match that is not in the group yet. Existing group memberships are never removed and no Telegram messages are sent. Requires FULL_AGENT=1.",
+        "responses": {
+          "200": {
+            "description": "Posts tagged.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "tagged": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group not found."
+          },
+          "405": {
+            "description": "API is read-only because FULL_AGENT is not 1."
+          }
+        }
+      }
+    },
+    "/api/groups/{id}/test": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/groupId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Test a candidate criterion on past posts",
+        "description": "Reports which stored posts a single account, keyword or hashtag would match, using the same rules as group matching, and whether each is already in the group. Nothing is saved.",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "account",
+                "keyword",
+                "hashtag"
+              ]
+            }
+          },
+          {
+            "name": "value",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matches.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PastMatchSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid type or missing value."
+          },
+          "404": {
+            "description": "Group not found."
+          }
+        }
+      }
+    },
     "/api/sources": {
       "get": {
         "tags": ["sources"],
@@ -1034,6 +1151,57 @@
           },
           "post_count": {
             "type": "integer"
+          }
+        }
+      },
+      "PastMatchSummary": {
+        "type": "object",
+        "properties": {
+          "matched": {
+            "type": "integer",
+            "description": "Stored posts the criteria match."
+          },
+          "already_in_group": {
+            "type": "integer"
+          },
+          "new_matches": {
+            "type": "integer",
+            "description": "Matching posts not in the group yet."
+          },
+          "sample": {
+            "type": "array",
+            "description": "Newest 20 (rescan: new matches only).",
+            "items": {
+              "type": "object",
+              "properties": {
+                "shortcode": {
+                  "type": "string"
+                },
+                "permalink": {
+                  "type": "string"
+                },
+                "author": {
+                  "type": "string"
+                },
+                "caption": {
+                  "type": "string",
+                  "description": "First 200 characters."
+                },
+                "timestamp": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "reasons": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "in_group": {
+                  "type": "boolean"
+                }
+              }
+            }
           }
         }
       }

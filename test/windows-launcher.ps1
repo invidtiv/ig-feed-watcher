@@ -22,7 +22,7 @@ function Open-FeedWatcherUrl {
 }
 try {
     New-Item -ItemType Directory -Path $fixture | Out-Null
-    foreach ($file in @('server.js','sources.js','runtime-policy.js','retention.js','contract-policy.js','skill-policy.js','package.json')) {
+    foreach ($file in @('server.js','sources.js','runtime-policy.js','retention.js','contract-policy.js','skill-policy.js','ai.js','group-match.js','package.json')) {
         Copy-Item -LiteralPath (Join-Path $AppRoot $file) -Destination $fixture
     }
     $node = Join-Path $AppRoot 'node.exe'

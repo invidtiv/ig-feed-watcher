@@ -31,6 +31,7 @@ import {
 } from './sources.js';
 import { createFullAgentGuard, loadRuntimePolicy, writeConfigValue } from './runtime-policy.js';
 import { runImageRetention } from './retention.js';
+import { matchGroups } from './group-match.js';
 import { contractForCapabilities } from './contract-policy.js';
 import { skillForCapabilities } from './skill-policy.js';
 import {
@@ -722,6 +723,87 @@ app.post('/api/groups/:id/remove', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ─── Past-post matching ───────────────────────────────────────────────────────
+
+// Groups are matched when a post is scraped. These routes apply a group's
+// current (or a candidate) criteria to the posts already stored.
+const PAST_MATCH_SAMPLE = 20;
+const CRITERION_FIELDS = { account: 'accounts', keyword: 'keywords', hashtag: 'hashtags' };
+
+function findPastMatches(group) {
+  const found = [];
+  const rows = db.prepare('SELECT shortcode, permalink, author, caption, timestamp, matched_groups FROM posts').iterate();
+  for (const row of rows) {
+    const [match] = matchGroups(row, [group]);
+    if (!match) continue;
+    const memberships = safeJsonArray(row.matched_groups);
+    found.push({ row, match, memberships, inGroup: memberships.some(m => m.id === group.id) });
+  }
+  return found;
+}
+
+function pastMatchSummary(found, sampleFrom) {
+  const sample = sampleFrom
+    .sort((a, b) => String(b.row.timestamp || '').localeCompare(String(a.row.timestamp || '')))
+    .slice(0, PAST_MATCH_SAMPLE)
+    .map(({ row, match, inGroup }) => ({
+      shortcode: row.shortcode,
+      permalink: row.permalink,
+      author: row.author,
+      caption: (row.caption || '').slice(0, 200),
+      timestamp: row.timestamp,
+      reasons: match.reasons,
+      in_group: inGroup,
+    }));
+  const newMatches = found.filter(f => !f.inGroup).length;
+  return { matched: found.length, already_in_group: found.length - newMatches, new_matches: newMatches, sample };
+}
+
+// Preview: stored posts the group's current criteria match but that are not in it yet.
+app.get('/api/groups/:id/rescan', (req, res) => {
+  try {
+    const group = loadGroups().find(g => g.id === req.params.id);
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+    const found = findPastMatches(group);
+    res.json(pastMatchSummary(found, found.filter(f => !f.inGroup)));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Apply: add the group to those posts. Existing memberships are never removed.
+app.post('/api/groups/:id/rescan', (req, res) => {
+  try {
+    const group = loadGroups().find(g => g.id === req.params.id);
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+    const toTag = findPastMatches(group).filter(f => !f.inGroup);
+    const update = db.prepare('UPDATE posts SET matched_groups = ?, is_priority = 1 WHERE shortcode = ?');
+    db.exec('BEGIN');
+    try {
+      for (const { row, match, memberships } of toTag) {
+        update.run(JSON.stringify([...memberships, match]), row.shortcode);
+      }
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+    res.json({ ok: true, tagged: toTag.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Try a candidate account/keyword/hashtag against stored posts without saving it.
+app.get('/api/groups/:id/test', (req, res) => {
+  try {
+    const group = loadGroups().find(g => g.id === req.params.id);
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+    const field = CRITERION_FIELDS[req.query.type];
+    const value = typeof req.query.value === 'string' ? req.query.value.trim() : '';
+    if (!field) return res.status(400).json({ error: 'type must be account, keyword or hashtag' });
+    if (!value) return res.status(400).json({ error: 'value is required' });
+    const found = findPastMatches({ id: group.id, name: group.name, color: group.color, [field]: [value] });
+    res.json(pastMatchSummary(found, found));
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ─── Sources API ──────────────────────────────────────────────────────────────
@@ -1775,6 +1857,15 @@ const SETTINGS_PAGE = `<!DOCTYPE html>
   .ai-item.remove b { color:#fca5a5; text-decoration:line-through; }
   .ai-sources { font-size:11px; color:var(--text-dim); margin-top:8px; }
   .ai-sources a { color:var(--accent-hover); }
+
+  /* Past posts */
+  .add-row select { background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px 12px; border-radius:8px; font-size:14px; }
+  .past-summary { font-size:13px; margin:8px 0; }
+  .past-item { font-size:13px; padding:6px 0; border-bottom:1px solid var(--border); }
+  .past-item:last-child { border-bottom:none; }
+  .past-item a { color:var(--accent); text-decoration:none; font-weight:600; }
+  .past-item .past-meta { color:var(--text-dim); font-size:11px; margin-left:6px; }
+  .past-item .past-caption { color:var(--text-dim); margin-top:2px; }
 </style>
 </head>
 <body>
@@ -1870,6 +1961,20 @@ function groupCardHtml(g) {
           '<label><input type="checkbox" id="ai-web-' + g.id + '" checked> Search the web (finds accounts to follow)</label>' +
         '</div>' +
         '<div id="ai-results-' + g.id + '"></div>' +
+      '</div>' +
+      '<div class="group-subsection">' +
+        '<h3>🔎 Past posts</h3>' +
+        '<div class="ai-controls">' +
+          '<button class="add-btn" id="rescan-run-' + g.id + '" onclick="rescanPreview(\\'' + g.id + '\\')">Re-scan past posts</button>' +
+          '<span class="empty-tags">Posts are matched when scraped; re-scan applies this group\\'s current criteria to posts already stored.</span>' +
+        '</div>' +
+        '<div id="rescan-results-' + g.id + '"></div>' +
+        '<div class="add-row" style="margin-top:12px">' +
+          '<select id="test-type-' + g.id + '"><option value="keyword">Keyword</option><option value="hashtag">Hashtag</option><option value="account">Account</option></select>' +
+          '<input type="text" id="test-value-' + g.id + '" placeholder="Test a keyword, #hashtag or account on past posts" onkeydown="if(event.key===\\'Enter\\')testCriterion(\\'' + g.id + '\\')">' +
+          '<button class="add-btn" onclick="testCriterion(\\'' + g.id + '\\')">Test</button>' +
+        '</div>' +
+        '<div id="test-results-' + g.id + '"></div>' +
       '</div>' +
       '<div class="group-subsection">' +
         '<h3>👤 Accounts</h3>' +
@@ -2016,6 +2121,85 @@ async function applyAiSuggestions(groupId) {
   } else {
     showToast('Error: ' + (result.error || 'failed'), true);
   }
+}
+
+function pastPostsHtml(sample, showMembership) {
+  return sample.map(p =>
+    '<div class="past-item">' +
+      '<a href="' + escapeHtml(p.permalink || '#') + '" target="_blank" rel="noopener">@' + escapeHtml(p.author) + '</a>' +
+      '<span class="past-meta">' + (p.timestamp ? new Date(p.timestamp).toLocaleDateString() : '') + ' · ' + escapeHtml(p.reasons.join(', ')) +
+        (showMembership && p.in_group ? ' · already in group' : '') + '</span>' +
+      '<div class="past-caption">' + escapeHtml(p.caption) + '</div>' +
+    '</div>').join('');
+}
+
+async function rescanPreview(groupId) {
+  const out = document.getElementById('rescan-results-' + groupId);
+  const button = document.getElementById('rescan-run-' + groupId);
+  out.innerHTML = '<div class="empty-tags">Scanning stored posts…</div>';
+  button.disabled = true;
+  try {
+    const res = await fetch('/api/groups/' + groupId + '/rescan');
+    const data = await res.json();
+    if (!res.ok) { out.innerHTML = '<div class="empty-tags" style="color:var(--red)">' + escapeHtml(data.error || 'Request failed') + '</div>'; return; }
+    if (data.new_matches === 0) {
+      out.innerHTML = '<div class="past-summary">All ' + data.matched + ' stored posts matching this group are already in it.</div>';
+      return;
+    }
+    out.innerHTML = '<div class="past-summary"><b>' + data.new_matches + '</b> past posts match but are not in this group yet (' + data.already_in_group + ' already are).' +
+      (data.new_matches > data.sample.length ? ' Newest ' + data.sample.length + ':' : '') + '</div>' +
+      pastPostsHtml(data.sample, false) +
+      '<div class="ai-controls" style="margin-top:12px"><button class="add-btn" onclick="rescanApply(\\'' + groupId + '\\')">Tag ' + data.new_matches + ' posts</button></div>';
+  } catch (err) {
+    out.innerHTML = '<div class="empty-tags" style="color:var(--red)">Request failed: ' + escapeHtml(err.message) + '</div>';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function rescanApply(groupId) {
+  const res = await fetch('/api/groups/' + groupId + '/rescan', { method: 'POST' });
+  const result = await res.json();
+  if (result.ok) {
+    showToast(result.tagged + ' past posts tagged');
+    await loadGroups();
+    toggleExpand(groupId);
+  } else {
+    showToast('Error: ' + (result.error || 'failed'), true);
+  }
+}
+
+async function testCriterion(groupId) {
+  const type = document.getElementById('test-type-' + groupId).value;
+  const value = document.getElementById('test-value-' + groupId).value.trim();
+  if (!value) return;
+  const out = document.getElementById('test-results-' + groupId);
+  out.innerHTML = '<div class="empty-tags">Testing on stored posts…</div>';
+  try {
+    const res = await fetch('/api/groups/' + groupId + '/test?type=' + type + '&value=' + encodeURIComponent(value));
+    const data = await res.json();
+    if (!res.ok) { out.innerHTML = '<div class="empty-tags" style="color:var(--red)">' + escapeHtml(data.error || 'Request failed') + '</div>'; return; }
+    const g = groups.find(x => x.id === groupId);
+    const field = type === 'account' ? 'accounts' : type + 's';
+    const alreadyCriterion = g && (g[field] || []).some(v => v.toLowerCase() === value.toLowerCase());
+    out.innerHTML = '<div class="past-summary"><b>' + data.matched + '</b> past posts match "' + escapeHtml(value) + '" — ' +
+      data.new_matches + ' not in this group yet.' + (data.matched > data.sample.length ? ' Newest ' + data.sample.length + ':' : '') + '</div>' +
+      pastPostsHtml(data.sample, true) +
+      (alreadyCriterion ? '' : '<div class="ai-controls" style="margin-top:12px"><button class="add-btn" onclick="addTestedCriterion(\\'' + groupId + '\\')">+ Add ' + type + ' to group</button></div>');
+  } catch (err) {
+    out.innerHTML = '<div class="empty-tags" style="color:var(--red)">Request failed: ' + escapeHtml(err.message) + '</div>';
+  }
+}
+
+async function addTestedCriterion(groupId) {
+  const type = document.getElementById('test-type-' + groupId).value;
+  const value = document.getElementById('test-value-' + groupId).value.trim();
+  document.getElementById('add-' + type + '-' + groupId).value = value;
+  await addItem(groupId, type);
+  const g = groups.find(x => x.id === groupId);
+  if (!g || !(g[type === 'account' ? 'accounts' : type + 's'] || []).includes(value)) return;
+  document.getElementById('test-results-' + groupId).innerHTML =
+    '<div class="past-summary">Added. Use <b>Re-scan past posts</b> above to tag the matching past posts.</div>';
 }
 
 function renderGroupTags(groupId) {

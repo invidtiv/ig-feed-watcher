@@ -74,6 +74,8 @@ curl -s 'http://127.0.0.1:4180/api/skill?format=md'
 | --- | --- |
 | `GET /api/feeds` | All feeds (posts), with filters |
 | `GET /api/groups/{id}/feeds` | Feeds matched to one group |
+| `GET /api/groups/{id}/rescan` | Preview stored posts the group's current criteria match but that are not in it yet |
+| `GET /api/groups/{id}/test?type=keyword&value=...` | Which stored posts a candidate `account`/`keyword`/`hashtag` would match |
 | `GET /api/feeds/{shortcode}` | One post, metadata + `image` reference |
 | `GET /api/feeds/{shortcode}/image` | Raw image bytes for a post |
 | `GET /api/export` | Bulk JSON export of post metadata |
@@ -95,6 +97,7 @@ Mutation endpoints available in full-agent mode:
 | `DELETE /api/groups/{id}` | Delete a group |
 | `POST /api/groups/{id}/add` | Add one account/keyword/hashtag to a group |
 | `POST /api/groups/{id}/remove` | Remove one account/keyword/hashtag from a group |
+| `POST /api/groups/{id}/rescan` | Tag the matching past posts with the group (never removes memberships) |
 | `PUT /api/settings/retention` | Set global `image_retention_days` (`FULL_AGENT=1`) |
 | `PUT /api/settings/ai` | Set the OpenRouter `apiKey` and/or `model` |
 | `POST /api/ai/ask` | Ask a question about stored posts (optionally with web search) |
@@ -136,6 +139,13 @@ The detail endpoint (`/api/feeds/{shortcode}`) adds `image` (an object with `url
 `GET /api/groups` returns every group with `id`, `name`, `color`, `accounts`,
 `keywords`, `hashtags`, `retention_days`, `telegramThreadId`, and `post_count`. Use a group's
 `id` with `/api/groups/{id}/feeds` or the `--group`/`group` filter.
+
+Posts are matched to groups when they are scraped, so criteria added later do
+not cover older posts. `GET /api/groups/{id}/rescan` previews the stored posts
+the current criteria match but that are not in the group yet, and
+`GET /api/groups/{id}/test?type=account|keyword|hashtag&value=...` shows what a
+candidate criterion would match. Both return `matched`, `already_in_group`,
+`new_matches` and a `sample` of the newest 20 posts with their `reasons`.
 
 ```json
 {

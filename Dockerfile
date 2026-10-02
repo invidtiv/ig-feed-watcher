@@ -12,7 +12,7 @@ RUN npm install --omit=dev --no-audit --no-fund express@^4.22.2 sharp@^0.35.5
 # sources.json — is provided by bind mounts from docker-compose.yml)
 COPY server.js ./
 COPY sources.js ./
-COPY runtime-policy.js retention.js contract-policy.js skill-policy.js ai.js ./
+COPY runtime-policy.js retention.js contract-policy.js skill-policy.js ai.js group-match.js ./
 COPY api/openapi.json ./api/openapi.json
 COPY skills/feed-api/SKILL.md ./skills/feed-api/SKILL.md
 COPY COOKIES-GUIDE.md ./

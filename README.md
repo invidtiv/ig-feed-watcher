@@ -202,6 +202,22 @@ served live at `/api/skill` (JSON envelope) and `/api/skill.md` (raw Markdown),
 so an agent can fetch the full skill and install it into its own skill library
 without prior knowledge of this repo.
 
+## Re-scanning past posts
+
+Posts are matched to groups when the watcher scrapes them, so accounts,
+keywords or hashtags added to a group later do not cover older posts. On the
+**🏷️ Groups** page, open a group and use **🔎 Past posts**:
+
+- **Re-scan past posts** — previews how many stored posts the group's current
+  criteria match but that are not in it yet (with the newest 20 and why they
+  match); **Tag N posts** adds them. It only adds: posts already in the group,
+  including ones you added by hand, are untouched, and no Telegram alerts are
+  sent.
+- **Test** — try a candidate keyword, hashtag or account against stored posts
+  before adding it; **+ Add to group** saves it if the results look right.
+
+API: `GET/POST /api/groups/{id}/rescan`, `GET /api/groups/{id}/test`.
+
 ## AI assistant (OpenRouter)
 
 Paste an OpenRouter API key (from openrouter.ai/keys) in the **AI assistant**

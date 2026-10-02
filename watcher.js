@@ -27,6 +27,7 @@ import { listSources, getIngester, registerIngester, sanitizeCookies } from './s
 import { resolveChromeExecutable } from './browser-path.js';
 import { loadRuntimePolicy, selectRunnableSources } from './runtime-policy.js';
 import { runImageRetention } from './retention.js';
+import { matchGroups } from './group-match.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -159,6 +160,7 @@ function initDB() {
   try { db.exec("ALTER TABLE posts ADD COLUMN matched_groups TEXT DEFAULT '[]'"); } catch {}
   try { db.exec("ALTER TABLE posts ADD COLUMN source_id TEXT DEFAULT ''"); } catch {}
   try { db.exec("ALTER TABLE posts ADD COLUMN source_name TEXT DEFAULT ''"); } catch {}
+  try { db.exec("ALTER TABLE posts ADD COLUMN screenshot_downsized INTEGER DEFAULT 0"); } catch {}
   try { db.exec("CREATE INDEX IF NOT EXISTS idx_posts_source ON posts(source_id)"); } catch {}
   return db;
 }
@@ -262,40 +264,6 @@ function loadGroups() {
   }
 
   return [];
-}
-
-function matchGroups(post, groups) {
-  const matched = [];
-  const authorLower = (post.author || '').toLowerCase();
-  const captionLower = (post.caption || '').toLowerCase();
-
-  for (const group of groups) {
-    const reasons = [];
-
-    if ((group.accounts || []).some(acct => authorLower.includes(acct.toLowerCase()))) {
-      reasons.push(`account @${post.author}`);
-    }
-
-    const matchedKeywords = (group.keywords || []).filter(kw =>
-      captionLower.includes(kw.toLowerCase())
-    );
-    if (matchedKeywords.length > 0) {
-      reasons.push(`keyword "${matchedKeywords[0]}"`);
-    }
-
-    const matchedHashtags = (group.hashtags || []).filter(tag =>
-      captionLower.includes(tag.toLowerCase())
-    );
-    if (matchedHashtags.length > 0) {
-      reasons.push(`hashtag ${matchedHashtags[0]}`);
-    }
-
-    if (reasons.length > 0) {
-      matched.push({ id: group.id, name: group.name, color: group.color || null, telegramThreadId: group.telegramThreadId || null, reasons });
-    }
-  }
-
-  return matched;
 }
 
 // ─── Telegram ─────────────────────────────────────────────────────────────────
@@ -1326,7 +1294,11 @@ async function ingestInstagramSource(source, ctx) {
       p.source_name = source.name;
     }
 
-    const newPosts = posts.filter(p => !seenSet.has(p.shortcode));
+    // Authors listed in BLOCKED_AUTHORS (comma-separated) are never stored.
+    const blockedAuthors = (readConfigValue('BLOCKED_AUTHORS') || '')
+      .split(',').map(a => a.trim().replace(/^@/, '').toLowerCase()).filter(Boolean);
+    const newPosts = posts.filter(p => !seenSet.has(p.shortcode)
+      && !blockedAuthors.includes(String(p.author).toLowerCase()));
     log(`Source "${source.name}": found ${newPosts.length} new post(s) of ${posts.length} scraped`);
 
     // Sort: group-matched posts first
@@ -1424,14 +1396,14 @@ async function runOnce() {
     if (runtimePolicy.imageRetentionDays === null) {
       log('WARNING: AUTO_RETENTION is enabled but IMAGE_RETENTION_DAYS is not a positive whole number; cleanup skipped');
     } else {
-      const retention = runImageRetention({
+      const retention = await runImageRetention({
         db,
         screenshotsDir: CONFIG.screenshotsDir,
         groups,
         mode: runtimePolicy.retentionMode,
         globalDays: runtimePolicy.imageRetentionDays,
       });
-      log(`Image retention: checked ${retention.checked}, expired ${retention.expired}, deleted ${retention.deleted}, missing ${retention.missing}, errors ${retention.errors}`);
+      log(`Image retention: checked ${retention.checked}, expired ${retention.expired}, downsized ${retention.downsized}, deleted ${retention.deleted}, missing ${retention.missing}, errors ${retention.errors}`);
     }
   }
 

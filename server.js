@@ -31,8 +31,18 @@ import {
 } from './sources.js';
 import { createFullAgentGuard, loadRuntimePolicy, writeConfigValue } from './runtime-policy.js';
 import { runImageRetention } from './retention.js';
+import { matchGroups } from './group-match.js';
 import { contractForCapabilities } from './contract-policy.js';
 import { skillForCapabilities } from './skill-policy.js';
+import {
+  DEFAULT_MODEL,
+  loadAiConfig,
+  postsToContext,
+  chat,
+  buildAskMessages,
+  buildSuggestMessages,
+  parseSuggestions,
+} from './ai.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -83,6 +93,7 @@ db.exec(`
 try { db.exec("ALTER TABLE posts ADD COLUMN matched_groups TEXT DEFAULT '[]'"); } catch {}
 try { db.exec("ALTER TABLE posts ADD COLUMN source_id TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE posts ADD COLUMN source_name TEXT DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE posts ADD COLUMN screenshot_downsized INTEGER DEFAULT 0"); } catch {}
 // This index depends on source_id, so it must run after the ALTER migrations.
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_posts_source ON posts(source_id)"); } catch {}
 
@@ -119,8 +130,14 @@ function fuzzyMatch(text, pattern) {
   if (searchWords.length === 0) return 1;
 
   const textWords = normText.split(/[^a-z0-9]+/).filter(w => w);
+  const textHashtags = normText.match(/#[a-z0-9_]+/g) || [];
 
   for (const sw of searchWords) {
+    // A #hashtag term matches that exact hashtag only (no prefix/fuzzy match).
+    if (sw.startsWith('#')) {
+      if (textHashtags.includes(sw)) continue;
+      return 0;
+    }
     if (normText.includes(sw)) continue;
     if (textWords.some(tw => tw.startsWith(sw))) continue;
     const maxDist = sw.length <= 3 ? 1 : 2;
@@ -708,6 +725,87 @@ app.post('/api/groups/:id/remove', (req, res) => {
   }
 });
 
+// ─── Past-post matching ───────────────────────────────────────────────────────
+
+// Groups are matched when a post is scraped. These routes apply a group's
+// current (or a candidate) criteria to the posts already stored.
+const PAST_MATCH_SAMPLE = 20;
+const CRITERION_FIELDS = { account: 'accounts', keyword: 'keywords', hashtag: 'hashtags' };
+
+function findPastMatches(group) {
+  const found = [];
+  const rows = db.prepare('SELECT shortcode, permalink, author, caption, timestamp, matched_groups FROM posts').iterate();
+  for (const row of rows) {
+    const [match] = matchGroups(row, [group]);
+    if (!match) continue;
+    const memberships = safeJsonArray(row.matched_groups);
+    found.push({ row, match, memberships, inGroup: memberships.some(m => m.id === group.id) });
+  }
+  return found;
+}
+
+function pastMatchSummary(found, sampleFrom) {
+  const sample = sampleFrom
+    .sort((a, b) => String(b.row.timestamp || '').localeCompare(String(a.row.timestamp || '')))
+    .slice(0, PAST_MATCH_SAMPLE)
+    .map(({ row, match, inGroup }) => ({
+      shortcode: row.shortcode,
+      permalink: row.permalink,
+      author: row.author,
+      caption: (row.caption || '').slice(0, 200),
+      timestamp: row.timestamp,
+      reasons: match.reasons,
+      in_group: inGroup,
+    }));
+  const newMatches = found.filter(f => !f.inGroup).length;
+  return { matched: found.length, already_in_group: found.length - newMatches, new_matches: newMatches, sample };
+}
+
+// Preview: stored posts the group's current criteria match but that are not in it yet.
+app.get('/api/groups/:id/rescan', (req, res) => {
+  try {
+    const group = loadGroups().find(g => g.id === req.params.id);
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+    const found = findPastMatches(group);
+    res.json(pastMatchSummary(found, found.filter(f => !f.inGroup)));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Apply: add the group to those posts. Existing memberships are never removed.
+app.post('/api/groups/:id/rescan', (req, res) => {
+  try {
+    const group = loadGroups().find(g => g.id === req.params.id);
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+    const toTag = findPastMatches(group).filter(f => !f.inGroup);
+    const update = db.prepare('UPDATE posts SET matched_groups = ?, is_priority = 1 WHERE shortcode = ?');
+    db.exec('BEGIN');
+    try {
+      for (const { row, match, memberships } of toTag) {
+        update.run(JSON.stringify([...memberships, match]), row.shortcode);
+      }
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+    res.json({ ok: true, tagged: toTag.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Try a candidate account/keyword/hashtag against stored posts without saving it.
+app.get('/api/groups/:id/test', (req, res) => {
+  try {
+    const group = loadGroups().find(g => g.id === req.params.id);
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+    const field = CRITERION_FIELDS[req.query.type];
+    const value = typeof req.query.value === 'string' ? req.query.value.trim() : '';
+    if (!field) return res.status(400).json({ error: 'type must be account, keyword or hashtag' });
+    if (!value) return res.status(400).json({ error: 'value is required' });
+    const found = findPastMatches({ id: group.id, name: group.name, color: group.color, [field]: [value] });
+    res.json(pastMatchSummary(found, found));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── Sources API ──────────────────────────────────────────────────────────────
 
 app.get('/api/sources', (req, res) => {
@@ -833,6 +931,94 @@ app.put('/api/settings/retention', (req, res) => {
   } catch (err) {
     return res.status(500).json({ error: `Failed to save image retention: ${err.message}` });
   }
+});
+
+// ─── AI (OpenRouter) ──────────────────────────────────────────────────────────
+
+// How many of the most recent matching posts are sent to the model as context.
+const AI_CONTEXT_POSTS = 80;
+const AI_FILTER_KEYS = ['group', 'source', 'author', 'search', 'reel', 'date_from', 'date_to'];
+
+function aiCommentsFor(shortcode) {
+  return db.prepare('SELECT author, text FROM comments WHERE shortcode = ? ORDER BY like_count DESC LIMIT 3')
+    .all(shortcode);
+}
+
+function sendAiError(res, err) {
+  res.status(err.status || 500).json({ error: err.message });
+}
+
+app.get('/api/settings/ai', (req, res) => {
+  const ai = loadAiConfig(ROOT);
+  // Never return the API key to the browser — only whether it is set.
+  res.json({ keySet: !!ai.apiKey, model: ai.model, defaultModel: DEFAULT_MODEL });
+});
+
+app.put('/api/settings/ai', (req, res) => {
+  try {
+    const { apiKey, model } = req.body || {};
+    for (const [label, value] of [['API key', apiKey], ['Model', model]]) {
+      if (typeof value === 'string' && /\s/.test(value.trim())) {
+        return res.status(400).json({ error: `${label} must not contain spaces or line breaks` });
+      }
+    }
+    if (typeof apiKey === 'string' && apiKey.trim()) writeConfigValue(ROOT, 'OPENROUTER_API_KEY', apiKey.trim());
+    if (typeof model === 'string' && model.trim()) writeConfigValue(ROOT, 'OPENROUTER_MODEL', model.trim());
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Answer a question about the posts matching the explorer filters.
+app.post('/api/ai/ask', async (req, res) => {
+  try {
+    const { question, filters, history, web } = req.body || {};
+    if (typeof question !== 'string' || !question.trim()) {
+      return res.status(400).json({ error: 'question is required' });
+    }
+    const query = { limit: AI_CONTEXT_POSTS, offset: 0 };
+    for (const key of AI_FILTER_KEYS) {
+      if (typeof filters?.[key] === 'string' && filters[key]) query[key] = filters[key];
+    }
+    const { posts, total } = queryPosts(query);
+    const messages = buildAskMessages({
+      question: question.trim(),
+      context: postsToContext(posts, aiCommentsFor),
+      postCount: posts.length,
+      total,
+      history,
+      web: web === true,
+    });
+    const result = await chat({ ...loadAiConfig(ROOT), messages, web: web === true });
+    res.json({
+      answer: result.content,
+      citations: result.citations,
+      model: result.model,
+      post_count: posts.length,
+      total,
+    });
+  } catch (err) { sendAiError(res, err); }
+});
+
+// Propose accounts/keywords/hashtags to add to (or remove from) a group.
+// Nothing is saved here — the UI applies accepted items via PUT /api/groups/:id.
+app.post('/api/ai/groups/:id/suggest', async (req, res) => {
+  try {
+    const group = loadGroups().find(g => g.id === req.params.id);
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+    const web = req.body?.web === true;
+    const { posts } = queryPosts({ group: group.id, limit: AI_CONTEXT_POSTS, offset: 0 });
+    const messages = buildSuggestMessages({
+      group,
+      context: postsToContext(posts, aiCommentsFor),
+      postCount: posts.length,
+      web,
+    });
+    const result = await chat({ ...loadAiConfig(ROOT), messages, web });
+    const suggestions = parseSuggestions(result.content, group);
+    const seenAuthor = db.prepare('SELECT 1 FROM posts WHERE author = ? LIMIT 1');
+    for (const item of suggestions.add.accounts) item.seen_in_feed = !!seenAuthor.get(item.value);
+    res.json({ ...suggestions, citations: result.citations, model: result.model, post_count: posts.length });
+  } catch (err) { sendAiError(res, err); }
 });
 
 // ─── Feeds API (the data contract) ────────────────────────────────────────────
@@ -1038,6 +1224,7 @@ const HTML_PAGE = `<!DOCTYPE html>
   .post-card:hover { transform: translateY(-2px); border-color: var(--accent); }
   .post-card.has-groups { border-color: var(--accent); }
   .post-card img { width: 100%; height: 280px; object-fit: cover; background: #111; }
+  .post-card img.thumb { object-fit: none; }
   .post-card .no-img { width: 100%; height: 280px; display: flex; align-items: center; justify-content: center; background: #111; color: var(--text-dim); font-size: 14px; }
   .post-card .info { padding: 12px 16px; }
   .post-card .author { font-weight: 600; color: var(--accent); font-size: 14px; }
@@ -1048,6 +1235,11 @@ const HTML_PAGE = `<!DOCTYPE html>
   .badge.reel { background: #e11d4820; color: #fb7185; }
   .badge.group { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
   .badge.comments { background: #6366f120; color: var(--accent-hover); }
+  .badge.thumb { background: #f59e0b20; color: #fbbf24; }
+  .hashtags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .hashtag { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #6366f115; color: var(--accent-hover); cursor: pointer; }
+  .hashtag:hover { background: #6366f140; }
+  .hashtag.more { background: none; color: var(--text-dim); cursor: default; }
 
   /* Comments in modal */
   .comments-section { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
@@ -1071,6 +1263,7 @@ const HTML_PAGE = `<!DOCTYPE html>
   .modal-overlay.active { display: flex; }
   .modal { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); max-width: 600px; max-height: 90vh; overflow-y: auto; width: 90%; }
   .modal img { width: 100%; border-radius: var(--radius) var(--radius) 0 0; }
+  .modal img.thumb { width: auto; display: block; margin: 16px auto 0; border-radius: 0; }
   .modal .body { padding: 20px; }
   .modal .close { position: absolute; top: 16px; right: 16px; background: rgba(0,0,0,0.6); border: none; color: white; width: 36px; height: 36px; border-radius: 50%; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; }
   .modal .close:hover { background: rgba(0,0,0,0.8); }
@@ -1093,6 +1286,22 @@ const HTML_PAGE = `<!DOCTYPE html>
   .toggle-row button { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; }
   .toggle-row button.active { background: var(--accent); border-color: var(--accent); }
   .timestamp { font-family: monospace; font-size: 11px; }
+
+  /* Ask AI */
+  .ai-panel { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 24px; }
+  .ai-panel h3 { font-size: 14px; margin-bottom: 4px; color: var(--text-dim); text-transform: uppercase; }
+  .ai-panel .ai-hint { font-size: 12px; color: var(--text-dim); margin-bottom: 12px; }
+  .ai-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .ai-row textarea { flex: 1; min-width: 240px; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 8px; font-size: 14px; font-family: inherit; resize: vertical; }
+  .ai-row textarea:focus { outline: none; border-color: var(--accent); }
+  .ai-row label { font-size: 13px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .ai-log:not(:empty) { margin-bottom: 12px; max-height: 480px; overflow-y: auto; }
+  .ai-msg { padding: 10px 12px; border-radius: 8px; margin-bottom: 8px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
+  .ai-msg.user { background: var(--bg); border: 1px solid var(--border); }
+  .ai-msg.assistant { background: #6366f115; border: 1px solid #6366f140; }
+  .ai-msg.error { background: #ef444415; border: 1px solid #ef444440; color: #fca5a5; }
+  .ai-msg .ai-meta { font-size: 11px; color: var(--text-dim); margin-top: 6px; white-space: normal; }
+  .ai-msg .ai-meta a { color: var(--accent-hover); }
 </style>
 </head>
 <body>
@@ -1151,6 +1360,18 @@ const HTML_PAGE = `<!DOCTYPE html>
     </label>
     <button class="filter-btn" onclick="reloadPosts()">Apply</button>
     <button class="filter-btn" style="background:var(--card);border:1px solid var(--border)" onclick="clearFilters()">Clear</button>
+  </div>
+
+  <div class="ai-panel" id="ai-panel">
+    <h3>🤖 Ask AI</h3>
+    <div class="ai-hint">Questions are answered from the most recent posts matching the filters above. Enter to send, Shift+Enter for a new line.</div>
+    <div class="ai-log" id="ai-log"></div>
+    <div class="ai-row">
+      <textarea id="ai-question" rows="2" placeholder="e.g. What are these accounts announcing this week?" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();askAi()}"></textarea>
+      <label><input type="checkbox" id="ai-web"> Search the web</label>
+      <button class="filter-btn" id="ai-send" onclick="askAi()">Ask</button>
+      <button class="filter-btn" style="background:var(--card);border:1px solid var(--border)" onclick="clearAi()">New chat</button>
+    </div>
   </div>
 
   <div class="posts-grid" id="posts-grid"></div>
@@ -1293,10 +1514,11 @@ async function reloadPosts() {
 
   grid.innerHTML = data.posts.map(p => {
     const img = p.screenshot_url
-      ? '<img src="' + p.screenshot_url + '" loading="lazy" onclick="openModal(&#39;'+p.shortcode+'&#39;)">'
+      ? '<img src="' + p.screenshot_url + '"' + (p.screenshot_downsized ? ' class="thumb"' : '') + ' loading="lazy" onclick="openModal(&#39;'+p.shortcode+'&#39;)">'
       : '<div class="no-img" onclick="openModal(&#39;'+p.shortcode+'&#39;)">No screenshot</div>';
     const badges = [
       p.is_reel ? '<span class="badge reel">Reel</span>' : '',
+      p.screenshot_downsized && p.screenshot_url ? '<span class="badge thumb" title="Image shrunk to 10% by retention">Thumbnail</span>' : '',
       groupBadges(p.matched_groups),
       p.comment_count > 0 ? '<span class="badge comments">💬 ' + p.comment_count + '</span>' : '',
     ].filter(b => b).join(' ');
@@ -1307,6 +1529,7 @@ async function reloadPosts() {
       '<div class="info">' +
         '<div class="author">@' + escapeHtml(p.author) + '</div>' +
         caption +
+        hashtagChips(p.caption, 6) +
         '<div class="meta">' + badges + time + '</div>' +
       '</div>' +
     '</div>';
@@ -1319,6 +1542,35 @@ async function reloadPosts() {
   pag.innerHTML = (hasPrev ? '<button onclick="prevPage()">← Previous</button>' : '<button disabled>← Previous</button>') +
     '<span style="align-self:center;color:var(--text-dim);font-size:14px">' + (currentOffset+1) + '–' + Math.min(currentOffset+LIMIT, currentTotal) + ' of ' + currentTotal + '</span>' +
     (hasNext ? '<button onclick="nextPage()">Next →</button>' : '<button disabled>Next →</button>');
+}
+
+// Unique hashtags in a caption, in order of appearance.
+function postHashtags(caption) {
+  const seen = new Set();
+  return ((caption || '').match(/#[\\p{L}\\p{N}_]+/gu) || []).filter(tag => {
+    const key = tag.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function hashtagChips(caption, max) {
+  const tags = postHashtags(caption);
+  if (tags.length === 0) return '';
+  const shown = max ? tags.slice(0, max) : tags;
+  return '<div class="hashtags">' +
+    shown.map(tag => '<span class="hashtag" title="Show posts with ' + escapeHtml(tag) + '" onclick="event.stopPropagation();filterByHashtag(this.textContent)">' + escapeHtml(tag) + '</span>').join('') +
+    (tags.length > shown.length ? '<span class="hashtag more">+' + (tags.length - shown.length) + '</span>' : '') +
+  '</div>';
+}
+
+function filterByHashtag(tag) {
+  document.getElementById('filter-search').value = tag;
+  document.getElementById('modal').classList.remove('active');
+  currentOffset = 0;
+  switchView('grid');
+  reloadPosts();
 }
 
 function prevPage() { currentOffset = Math.max(0, currentOffset - LIMIT); reloadPosts(); }
@@ -1344,9 +1596,10 @@ async function openModal(shortcode) {
   const res = await fetch('/api/posts/' + shortcode);
   const p = await res.json();
 
-  const img = p.screenshot_url ? '<img src="' + p.screenshot_url + '">' : '';
+  const img = p.screenshot_url ? '<img src="' + p.screenshot_url + '"' + (p.screenshot_downsized ? ' class="thumb"' : '') + '>' : '';
   const badges = [
     p.is_reel ? '<span class="badge reel">Reel</span>' : '',
+    p.screenshot_downsized && p.screenshot_url ? '<span class="badge thumb" title="Image shrunk to 10% by retention">Thumbnail</span>' : '',
     groupBadges(p.matched_groups),
     p.comment_count > 0 ? '<span class="badge comments">💬 ' + p.comment_count + '</span>' : '',
   ].filter(b => b).join(' ');
@@ -1401,7 +1654,7 @@ async function openModal(shortcode) {
     img +
     '<div class="body">' +
       '<div style="display:flex;justify-content:space-between;align-items:start">' +
-        '<div><div class="author" style="font-size:18px">@' + escapeHtml(p.author) + '</div>' + badges + '</div>' +
+        '<div><div class="author" style="font-size:18px">@' + escapeHtml(p.author) + '</div>' + badges + hashtagChips(p.caption) + '</div>' +
         '<a href="' + p.permalink + '" target="_blank" style="color:var(--accent);text-decoration:none;font-size:14px">Open on IG ↗</a>' +
       '</div>' +
       groupAssignHtml +
@@ -1454,6 +1707,63 @@ function switchView(view) {
 function escapeHtml(str) {
   if (str == null) return '';
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ─── Ask AI ───
+let aiHistory = [];
+
+function aiMessageHtml(role, text, meta) {
+  return '<div class="ai-msg ' + role + '">' + escapeHtml(text) + (meta ? '<div class="ai-meta">' + meta + '</div>' : '') + '</div>';
+}
+
+async function askAi() {
+  const input = document.getElementById('ai-question');
+  const question = input.value.trim();
+  if (!question) return;
+  const log = document.getElementById('ai-log');
+  const send = document.getElementById('ai-send');
+  const filters = Object.fromEntries(getFilters());
+  delete filters.limit;
+  delete filters.offset;
+  const web = document.getElementById('ai-web').checked;
+
+  log.insertAdjacentHTML('beforeend', aiMessageHtml('user', question));
+  log.insertAdjacentHTML('beforeend', '<div class="ai-msg assistant" id="ai-pending">Thinking…</div>');
+  log.scrollTop = log.scrollHeight;
+  input.value = '';
+  send.disabled = true;
+  try {
+    const res = await fetch('/api/ai/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, filters, web, history: aiHistory }),
+    });
+    const data = await res.json();
+    document.getElementById('ai-pending').remove();
+    if (!res.ok) {
+      log.insertAdjacentHTML('beforeend', aiMessageHtml('error', data.error || 'Request failed',
+        res.status === 400 && /API key/.test(data.error || '') ? '<a href="/settings/sources">Open Sources settings →</a>' : ''));
+      return;
+    }
+    aiHistory.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer });
+    const sources = (data.citations || []).map(c =>
+      '<a href="' + escapeHtml(c.url) + '" target="_blank" rel="noopener">' + escapeHtml(c.title) + '</a>').join(' · ');
+    const meta = 'Based on ' + data.post_count + ' of ' + data.total + ' matching posts · ' + escapeHtml(data.model) +
+      (sources ? '<br>Web sources: ' + sources : '');
+    log.insertAdjacentHTML('beforeend', aiMessageHtml('assistant', data.answer, meta));
+  } catch (err) {
+    const pending = document.getElementById('ai-pending');
+    if (pending) pending.remove();
+    log.insertAdjacentHTML('beforeend', aiMessageHtml('error', 'Request failed: ' + err.message));
+  } finally {
+    send.disabled = false;
+    log.scrollTop = log.scrollHeight;
+  }
+}
+
+function clearAi() {
+  aiHistory = [];
+  document.getElementById('ai-log').innerHTML = '';
 }
 
 // Init
@@ -1532,6 +1842,30 @@ const SETTINGS_PAGE = `<!DOCTYPE html>
   .new-group-form input:focus { outline:none; border-color:var(--accent); }
   .new-group-form .name-input { min-width:200px; }
   .color-input { width:60px; height:38px; border:1px solid var(--border); border-radius:8px; background:var(--bg); cursor:pointer; }
+
+  /* AI suggestions */
+  .ai-controls { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:8px; }
+  .ai-controls label { font-size:13px; color:var(--text-dim); display:flex; align-items:center; gap:6px; cursor:pointer; }
+  .ai-summary { font-size:13px; margin:8px 0; line-height:1.5; }
+  .ai-list h4 { font-size:12px; color:var(--text-dim); margin:10px 0 4px; }
+  .ai-item { display:flex; gap:8px; align-items:baseline; font-size:13px; padding:4px 0; cursor:pointer; }
+  .ai-item input { accent-color:var(--accent); }
+  .ai-item .ai-reason { color:var(--text-dim); }
+  .ai-item .ai-badge { font-size:10px; padding:1px 6px; border-radius:4px; white-space:nowrap; }
+  .ai-item .ai-badge.ok { background:#10b98120; color:var(--green); }
+  .ai-item .ai-badge.warn { background:#f59e0b20; color:#fbbf24; }
+  .ai-item.remove b { color:#fca5a5; text-decoration:line-through; }
+  .ai-sources { font-size:11px; color:var(--text-dim); margin-top:8px; }
+  .ai-sources a { color:var(--accent-hover); }
+
+  /* Past posts */
+  .add-row select { background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px 12px; border-radius:8px; font-size:14px; }
+  .past-summary { font-size:13px; margin:8px 0; }
+  .past-item { font-size:13px; padding:6px 0; border-bottom:1px solid var(--border); }
+  .past-item:last-child { border-bottom:none; }
+  .past-item a { color:var(--accent); text-decoration:none; font-weight:600; }
+  .past-item .past-meta { color:var(--text-dim); font-size:11px; margin-left:6px; }
+  .past-item .past-caption { color:var(--text-dim); margin-top:2px; }
 </style>
 </head>
 <body>
@@ -1614,11 +1948,34 @@ function groupCardHtml(g) {
         retentionBadge +
       '</div>' +
       '<div class="group-actions">' +
+        '<button onclick="suggestAi(\\'' + g.id + '\\')">✨ AI</button>' +
         '<button onclick="toggleExpand(\\'' + g.id + '\\')">Edit</button>' +
         '<button class="delete-btn" onclick="deleteGroup(\\'' + g.id + '\\')">Delete</button>' +
       '</div>' +
     '</div>' +
     '<div class="group-body">' +
+      '<div class="group-subsection">' +
+        '<h3>✨ AI suggestions</h3>' +
+        '<div class="ai-controls">' +
+          '<button class="add-btn" id="ai-run-' + g.id + '" onclick="suggestAi(\\'' + g.id + '\\')">Suggest improvements</button>' +
+          '<label><input type="checkbox" id="ai-web-' + g.id + '" checked> Search the web (finds accounts to follow)</label>' +
+        '</div>' +
+        '<div id="ai-results-' + g.id + '"></div>' +
+      '</div>' +
+      '<div class="group-subsection">' +
+        '<h3>🔎 Past posts</h3>' +
+        '<div class="ai-controls">' +
+          '<button class="add-btn" id="rescan-run-' + g.id + '" onclick="rescanPreview(\\'' + g.id + '\\')">Re-scan past posts</button>' +
+          '<span class="empty-tags">Posts are matched when scraped; re-scan applies this group\\'s current criteria to posts already stored.</span>' +
+        '</div>' +
+        '<div id="rescan-results-' + g.id + '"></div>' +
+        '<div class="add-row" style="margin-top:12px">' +
+          '<select id="test-type-' + g.id + '"><option value="keyword">Keyword</option><option value="hashtag">Hashtag</option><option value="account">Account</option></select>' +
+          '<input type="text" id="test-value-' + g.id + '" placeholder="Test a keyword, #hashtag or account on past posts" onkeydown="if(event.key===\\'Enter\\')testCriterion(\\'' + g.id + '\\')">' +
+          '<button class="add-btn" onclick="testCriterion(\\'' + g.id + '\\')">Test</button>' +
+        '</div>' +
+        '<div id="test-results-' + g.id + '"></div>' +
+      '</div>' +
       '<div class="group-subsection">' +
         '<h3>👤 Accounts</h3>' +
         '<div class="add-row">' +
@@ -1664,6 +2021,185 @@ function toggleExpand(groupId) {
     card.classList.add('expanded');
     renderGroupTags(groupId);
   }
+}
+
+const AI_FIELDS = [
+  { field: 'accounts', label: '👤 Accounts', prefix: '@' },
+  { field: 'keywords', label: '🔑 Keywords', prefix: '' },
+  { field: 'hashtags', label: '# Hashtags', prefix: '' },
+];
+
+async function suggestAi(groupId) {
+  const card = document.getElementById('card-' + groupId);
+  if (!card.classList.contains('expanded')) toggleExpand(groupId);
+  const out = document.getElementById('ai-results-' + groupId);
+  const button = document.getElementById('ai-run-' + groupId);
+  const web = document.getElementById('ai-web-' + groupId).checked;
+  out.innerHTML = '<div class="empty-tags">Asking the AI' + (web ? ' (with web search)' : '') + '… this can take up to a minute.</div>';
+  button.disabled = true;
+  try {
+    const res = await fetch('/api/ai/groups/' + groupId + '/suggest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ web }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      out.innerHTML = '<div class="empty-tags" style="color:var(--red)">' + escapeHtml(data.error || 'Request failed') +
+        (/API key/.test(data.error || '') ? ' <a href="/settings/sources" style="color:var(--accent)">Open Sources settings →</a>' : '') + '</div>';
+      return;
+    }
+    out.innerHTML = aiSuggestionsHtml(groupId, data);
+  } catch (err) {
+    out.innerHTML = '<div class="empty-tags" style="color:var(--red)">Request failed: ' + escapeHtml(err.message) + '</div>';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function aiItemHtml(action, field, prefix, item) {
+  let badge = '';
+  if (field === 'accounts' && action === 'add') {
+    badge = item.seen_in_feed
+      ? '<span class="ai-badge ok">seen in feed</span>'
+      : '<span class="ai-badge warn">check on Instagram</span>';
+  }
+  return '<label class="ai-item ' + action + '">' +
+    '<input type="checkbox" data-action="' + action + '" data-field="' + field + '" data-value="' + escapeHtml(item.value) + '"' + (action === 'add' ? ' checked' : '') + '>' +
+    '<b>' + escapeHtml(prefix + item.value) + '</b>' + badge +
+    '<span class="ai-reason">' + escapeHtml(item.reason) + '</span>' +
+  '</label>';
+}
+
+function aiSuggestionsHtml(groupId, data) {
+  let html = data.summary ? '<div class="ai-summary">' + escapeHtml(data.summary) + '</div>' : '';
+  let count = 0;
+  for (const action of ['add', 'remove']) {
+    for (const f of AI_FIELDS) {
+      const items = (data[action] && data[action][f.field]) || [];
+      if (items.length === 0) continue;
+      count += items.length;
+      html += '<div class="ai-list"><h4>' + (action === 'add' ? 'Add ' : 'Remove ') + f.label + '</h4>' +
+        items.map(item => aiItemHtml(action, f.field, f.prefix, item)).join('') + '</div>';
+    }
+  }
+  if (count === 0) return html + '<div class="empty-tags">No changes suggested.</div>';
+  html += '<div class="ai-controls" style="margin-top:12px"><button class="add-btn" onclick="applyAiSuggestions(\\'' + groupId + '\\')">Apply selected</button></div>';
+  const sources = (data.citations || []).map(c =>
+    '<a href="' + escapeHtml(c.url) + '" target="_blank" rel="noopener">' + escapeHtml(c.title) + '</a>').join(' · ');
+  html += '<div class="ai-sources">Based on ' + data.post_count + ' recent posts · ' + escapeHtml(data.model) +
+    (sources ? '<br>Web sources: ' + sources : '') + '</div>';
+  return html;
+}
+
+async function applyAiSuggestions(groupId) {
+  const g = groups.find(x => x.id === groupId);
+  if (!g) return;
+  const checked = document.querySelectorAll('#ai-results-' + groupId + ' input[type=checkbox]:checked');
+  if (checked.length === 0) { showToast('Nothing selected', true); return; }
+  const lists = {};
+  for (const f of AI_FIELDS) lists[f.field] = (g[f.field] || []).slice();
+  checked.forEach(input => {
+    const list = lists[input.dataset.field];
+    const value = input.dataset.value;
+    if (input.dataset.action === 'add') {
+      if (!list.includes(value)) list.push(value);
+    } else {
+      lists[input.dataset.field] = list.filter(v => v !== value);
+    }
+  });
+  const res = await fetch('/api/groups/' + groupId, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(lists),
+  });
+  const result = await res.json();
+  if (result.ok) {
+    showToast(checked.length + ' change(s) applied');
+    await loadGroups();
+    toggleExpand(groupId);
+  } else {
+    showToast('Error: ' + (result.error || 'failed'), true);
+  }
+}
+
+function pastPostsHtml(sample, showMembership) {
+  return sample.map(p =>
+    '<div class="past-item">' +
+      '<a href="' + escapeHtml(p.permalink || '#') + '" target="_blank" rel="noopener">@' + escapeHtml(p.author) + '</a>' +
+      '<span class="past-meta">' + (p.timestamp ? new Date(p.timestamp).toLocaleDateString() : '') + ' · ' + escapeHtml(p.reasons.join(', ')) +
+        (showMembership && p.in_group ? ' · already in group' : '') + '</span>' +
+      '<div class="past-caption">' + escapeHtml(p.caption) + '</div>' +
+    '</div>').join('');
+}
+
+async function rescanPreview(groupId) {
+  const out = document.getElementById('rescan-results-' + groupId);
+  const button = document.getElementById('rescan-run-' + groupId);
+  out.innerHTML = '<div class="empty-tags">Scanning stored posts…</div>';
+  button.disabled = true;
+  try {
+    const res = await fetch('/api/groups/' + groupId + '/rescan');
+    const data = await res.json();
+    if (!res.ok) { out.innerHTML = '<div class="empty-tags" style="color:var(--red)">' + escapeHtml(data.error || 'Request failed') + '</div>'; return; }
+    if (data.new_matches === 0) {
+      out.innerHTML = '<div class="past-summary">All ' + data.matched + ' stored posts matching this group are already in it.</div>';
+      return;
+    }
+    out.innerHTML = '<div class="past-summary"><b>' + data.new_matches + '</b> past posts match but are not in this group yet (' + data.already_in_group + ' already are).' +
+      (data.new_matches > data.sample.length ? ' Newest ' + data.sample.length + ':' : '') + '</div>' +
+      pastPostsHtml(data.sample, false) +
+      '<div class="ai-controls" style="margin-top:12px"><button class="add-btn" onclick="rescanApply(\\'' + groupId + '\\')">Tag ' + data.new_matches + ' posts</button></div>';
+  } catch (err) {
+    out.innerHTML = '<div class="empty-tags" style="color:var(--red)">Request failed: ' + escapeHtml(err.message) + '</div>';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function rescanApply(groupId) {
+  const res = await fetch('/api/groups/' + groupId + '/rescan', { method: 'POST' });
+  const result = await res.json();
+  if (result.ok) {
+    showToast(result.tagged + ' past posts tagged');
+    await loadGroups();
+    toggleExpand(groupId);
+  } else {
+    showToast('Error: ' + (result.error || 'failed'), true);
+  }
+}
+
+async function testCriterion(groupId) {
+  const type = document.getElementById('test-type-' + groupId).value;
+  const value = document.getElementById('test-value-' + groupId).value.trim();
+  if (!value) return;
+  const out = document.getElementById('test-results-' + groupId);
+  out.innerHTML = '<div class="empty-tags">Testing on stored posts…</div>';
+  try {
+    const res = await fetch('/api/groups/' + groupId + '/test?type=' + type + '&value=' + encodeURIComponent(value));
+    const data = await res.json();
+    if (!res.ok) { out.innerHTML = '<div class="empty-tags" style="color:var(--red)">' + escapeHtml(data.error || 'Request failed') + '</div>'; return; }
+    const g = groups.find(x => x.id === groupId);
+    const field = type === 'account' ? 'accounts' : type + 's';
+    const alreadyCriterion = g && (g[field] || []).some(v => v.toLowerCase() === value.toLowerCase());
+    out.innerHTML = '<div class="past-summary"><b>' + data.matched + '</b> past posts match "' + escapeHtml(value) + '" — ' +
+      data.new_matches + ' not in this group yet.' + (data.matched > data.sample.length ? ' Newest ' + data.sample.length + ':' : '') + '</div>' +
+      pastPostsHtml(data.sample, true) +
+      (alreadyCriterion ? '' : '<div class="ai-controls" style="margin-top:12px"><button class="add-btn" onclick="addTestedCriterion(\\'' + groupId + '\\')">+ Add ' + type + ' to group</button></div>');
+  } catch (err) {
+    out.innerHTML = '<div class="empty-tags" style="color:var(--red)">Request failed: ' + escapeHtml(err.message) + '</div>';
+  }
+}
+
+async function addTestedCriterion(groupId) {
+  const type = document.getElementById('test-type-' + groupId).value;
+  const value = document.getElementById('test-value-' + groupId).value.trim();
+  document.getElementById('add-' + type + '-' + groupId).value = value;
+  await addItem(groupId, type);
+  const g = groups.find(x => x.id === groupId);
+  if (!g || !(g[type === 'account' ? 'accounts' : type + 's'] || []).includes(value)) return;
+  document.getElementById('test-results-' + groupId).innerHTML =
+    '<div class="past-summary">Added. Use <b>Re-scan past posts</b> above to tag the matching past posts.</div>';
 }
 
 function renderGroupTags(groupId) {
@@ -2115,6 +2651,26 @@ ${RUNTIME_POLICY.retentionMode !== 0 ? `<div class="section" id="retention-secti
   <div class="hint" id="tg-current"></div>
 </div>
 
+<div class="section" id="ai-section">
+  <h2>AI assistant (OpenRouter)</h2>
+  <div class="desc">
+    Powers <b>Ask AI</b> in the Explorer and <b>✨ AI suggestions</b> on the
+    Groups page. Create a key at <b>openrouter.ai/keys</b> and paste it below.
+    The key is stored in .env.config and is never shown again. Leave a field
+    blank to keep its current value.
+  </div>
+  <div class="field-row">
+    <label>OpenRouter API key
+      <input type="password" id="ai-key" autocomplete="off" placeholder="sk-or-v1-...">
+    </label>
+    <label>Model
+      <input type="text" id="ai-model" placeholder="${DEFAULT_MODEL}">
+    </label>
+    <button class="add-btn" onclick="saveAiSettings()">💾 Save AI settings</button>
+  </div>
+  <div class="hint" id="ai-current"></div>
+</div>
+
 <div class="section">
   <h2>Data API &amp; Contract</h2>
   <div class="desc">Programmatic access to the feed database. The full OpenAPI contract is served at <code>/api/contract</code>.</div>
@@ -2355,9 +2911,9 @@ async function loadRetentionSettings() {
   input.value = data.image_retention_days || '';
 
   if (data.auto_retention === 2) {
-    desc.textContent = 'AUTO_RETENTION=2: this is the fallback for all images. Each group can override it on the Groups page; an image in multiple groups keeps the longest retention.';
+    desc.textContent = 'AUTO_RETENTION=2: this is the fallback for all images. Each group can override it on the Groups page; an image in multiple groups keeps the longest retention. Expired images are shrunk to 10% of each dimension, then deleted at twice the retention period.';
   } else if (data.auto_retention === 1) {
-    desc.textContent = 'AUTO_RETENTION=1: this global value applies to every image.';
+    desc.textContent = 'AUTO_RETENTION=1: this global value applies to every image. Expired images are shrunk to 10% of each dimension, then deleted at twice the retention period.';
   } else {
     desc.textContent = 'Automatic retention is disabled. Set AUTO_RETENTION=1 or 2 in .env.config to activate this saved global value.';
   }
@@ -2418,6 +2974,35 @@ async function saveTelegram() {
   }
 }
 
+async function loadAiSettings() {
+  const res = await fetch('/api/settings/ai');
+  const data = await res.json();
+  document.getElementById('ai-current').textContent = (data.keySet
+    ? 'API key is set.'
+    : 'API key not set yet — Ask AI and AI suggestions stay disabled until you save one here.')
+    + ' Model: ' + data.model + (data.model === data.defaultModel ? ' (default)' : '');
+}
+
+async function saveAiSettings() {
+  const apiKey = document.getElementById('ai-key').value.trim();
+  const model = document.getElementById('ai-model').value.trim();
+  if (!apiKey && !model) { showToast('Enter an API key and/or a model', true); return; }
+  const res = await fetch('/api/settings/ai', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ apiKey, model }),
+  });
+  const result = await res.json();
+  if (result.ok) {
+    document.getElementById('ai-key').value = '';
+    document.getElementById('ai-model').value = '';
+    showToast('AI settings saved');
+    loadAiSettings();
+  } else {
+    showToast('Error: ' + (result.error || 'failed'), true);
+  }
+}
+
 function showToast(msg, isError) {
   const toast = document.getElementById('toast');
   toast.textContent = msg;
@@ -2453,6 +3038,7 @@ function escapeHtml(str) {
 // Init
 loadSources();
 loadTelegramSettings();
+loadAiSettings();
 loadRetentionSettings();
 </script>
 </body>
@@ -2460,25 +3046,25 @@ loadRetentionSettings();
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-function applyImageRetention() {
+async function applyImageRetention() {
   const retentionPolicy = loadRuntimePolicy(ROOT);
   if (retentionPolicy.retentionMode === 0) return;
   if (retentionPolicy.imageRetentionDays === null) {
     console.error('Image retention is enabled but IMAGE_RETENTION_DAYS is not a positive whole number; cleanup skipped.');
     return;
   }
-  const result = runImageRetention({
+  const result = await runImageRetention({
     db,
     screenshotsDir: SCREENSHOTS_DIR,
     groups: loadGroups(),
     mode: retentionPolicy.retentionMode,
     globalDays: retentionPolicy.imageRetentionDays,
   });
-  console.log(`Image retention: checked ${result.checked}, expired ${result.expired}, deleted ${result.deleted}, missing ${result.missing}, errors ${result.errors}`);
+  console.log(`Image retention: checked ${result.checked}, expired ${result.expired}, downsized ${result.downsized}, deleted ${result.deleted}, missing ${result.missing}, errors ${result.errors}`);
 }
 
-applyImageRetention();
-const retentionTimer = setInterval(applyImageRetention, 24 * 60 * 60 * 1000);
+applyImageRetention().catch(err => console.error('Image retention failed:', err.message));
+const retentionTimer = setInterval(() => applyImageRetention().catch(err => console.error('Image retention failed:', err.message)), 24 * 60 * 60 * 1000);
 retentionTimer.unref();
 
 app.listen(PORT, '0.0.0.0', () => {

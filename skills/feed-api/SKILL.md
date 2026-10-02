@@ -74,6 +74,8 @@ curl -s 'http://127.0.0.1:4180/api/skill?format=md'
 | --- | --- |
 | `GET /api/feeds` | All feeds (posts), with filters |
 | `GET /api/groups/{id}/feeds` | Feeds matched to one group |
+| `GET /api/groups/{id}/rescan` | Preview stored posts the group's current criteria match but that are not in it yet |
+| `GET /api/groups/{id}/test?type=keyword&value=...` | Which stored posts a candidate `account`/`keyword`/`hashtag` would match |
 | `GET /api/feeds/{shortcode}` | One post, metadata + `image` reference |
 | `GET /api/feeds/{shortcode}/image` | Raw image bytes for a post |
 | `GET /api/export` | Bulk JSON export of post metadata |
@@ -81,6 +83,7 @@ curl -s 'http://127.0.0.1:4180/api/skill?format=md'
 | `GET /api/groups/{id}` | One group's full details |
 | `GET /api/sources` | Ingestion sources (cookie values masked) |
 | `GET /api/settings/retention` | Current automatic/global image-retention settings |
+| `GET /api/settings/ai` | Whether an OpenRouter API key is set, and the model in use |
 | `GET /api/contract` | The OpenAPI data contract |
 | `GET /api/skill` | This skill, as a JSON envelope or raw Markdown (`?format=md`, `/api/skill.md`) |
 
@@ -94,7 +97,11 @@ Mutation endpoints available in full-agent mode:
 | `DELETE /api/groups/{id}` | Delete a group |
 | `POST /api/groups/{id}/add` | Add one account/keyword/hashtag to a group |
 | `POST /api/groups/{id}/remove` | Remove one account/keyword/hashtag from a group |
+| `POST /api/groups/{id}/rescan` | Tag the matching past posts with the group (never removes memberships) |
 | `PUT /api/settings/retention` | Set global `image_retention_days` (`FULL_AGENT=1`) |
+| `PUT /api/settings/ai` | Set the OpenRouter `apiKey` and/or `model` |
+| `POST /api/ai/ask` | Ask a question about stored posts (optionally with web search) |
+| `POST /api/ai/groups/{id}/suggest` | Suggest accounts/keywords/hashtags to add to or remove from a group |
 <!-- FULL_AGENT_ONLY_END -->
 
 Common filters (query params): `group`, `source`, `author`, `search`, `reel=0|1`,
@@ -116,6 +123,7 @@ A post (`/api/feeds`, `/api/groups/{id}/feeds`) looks like:
   "priority_reasons": ["Florest: keyword …"],
   "image_urls": ["https://…"],
   "screenshot_url": "/screenshots/C1b2dEf.jpg",
+  "screenshot_downsized": 0,
   "matched_groups": [{ "id": "g_mr7u3k93", "name": "Florest", "color": "#26f50a", "reasons": ["…"] }],
   "source_id": "ig-primary",
   "source_name": "Primary Instagram",
@@ -131,6 +139,13 @@ The detail endpoint (`/api/feeds/{shortcode}`) adds `image` (an object with `url
 `GET /api/groups` returns every group with `id`, `name`, `color`, `accounts`,
 `keywords`, `hashtags`, `retention_days`, `telegramThreadId`, and `post_count`. Use a group's
 `id` with `/api/groups/{id}/feeds` or the `--group`/`group` filter.
+
+Posts are matched to groups when they are scraped, so criteria added later do
+not cover older posts. `GET /api/groups/{id}/rescan` previews the stored posts
+the current criteria match but that are not in the group yet, and
+`GET /api/groups/{id}/test?type=account|keyword|hashtag&value=...` shows what a
+candidate criterion would match. Both return `matched`, `already_in_group`,
+`new_matches` and a `sample` of the newest 20 posts with their `reasons`.
 
 ```json
 {
@@ -188,6 +203,30 @@ Details and rules:
   `{ "ok": true }`); errors are `{ "error": "..." }` with 400/404/500.
 <!-- FULL_AGENT_ONLY_END -->
 
+<!-- FULL_AGENT_ONLY_START -->
+## AI (OpenRouter)
+
+Both endpoints need an OpenRouter API key (`GET /api/settings/ai` → `keySet`)
+and return 400 without one, 502 when OpenRouter fails. Calls are billed to
+that key; `"web": true` adds live web search (more expensive).
+
+```bash
+# Ask about the 80 most recent posts matching the filters (same as /api/feeds)
+curl -s -X POST http://localhost:4180/api/ai/ask -H 'Content-Type: application/json' \
+  -d '{"question":"What are these accounts announcing?","filters":{"group":"g_mr7u3k93"},"web":false}'
+# → { "answer", "citations": [{url,title}], "model", "post_count", "total" }
+
+# Suggestions for a group — nothing is saved
+curl -s -X POST http://localhost:4180/api/ai/groups/g_mr7u3k93/suggest \
+  -H 'Content-Type: application/json' -d '{"web":true}'
+# → { "summary", "add": {accounts,keywords,hashtags}, "remove": {...}, "citations", ... }
+```
+
+Each suggestion is `{ "value", "reason" }`; `add.accounts` items also carry
+`seen_in_feed`. Apply the accepted ones with `PUT /api/groups/{id}` (full
+lists) or `POST /api/groups/{id}/add` / `remove`.
+<!-- FULL_AGENT_ONLY_END -->
+
 ## Sources
 
 `GET /api/sources` lists ingestion sources (`id`, `name`, `type`, `enabled`,
@@ -215,7 +254,8 @@ it verbatim, including the YAML frontmatter, and replace any older copy.
 
 ## Notes
 
-- `author`/`search` filters use fuzzy matching, not exact SQL.
+- `author`/`search` filters use fuzzy matching, not exact SQL. A `search` term
+  starting with `#` (e.g. `search=%23pronaf`) matches that exact hashtag only.
 - The image endpoint serves JPEG/PNG/WebP bytes directly.
 <!-- FULL_AGENT_ONLY_START -->
 - `POST`/`PUT`/`DELETE` on `/api/sources*` manage sources and cookie values
@@ -223,6 +263,9 @@ it verbatim, including the YAML frontmatter, and replace any older copy.
 - Group mutations persist to `groups.json` and are picked up by the watcher on
   its next cycle — no restart needed.
 <!-- FULL_AGENT_ONLY_END -->
+- When image retention is on, an image past its retention is shrunk to 10% of
+  each dimension (`screenshot_downsized: 1`) and deleted at twice the retention
+  period (`screenshot_url` becomes `null`).
 - In `AUTO_RETENTION=2`, group responses include `retention_days`,
   `effective_retention_days`, and `retention_inherited`.
 <!-- FULL_AGENT_ONLY_START -->

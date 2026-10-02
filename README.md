@@ -202,6 +202,43 @@ served live at `/api/skill` (JSON envelope) and `/api/skill.md` (raw Markdown),
 so an agent can fetch the full skill and install it into its own skill library
 without prior knowledge of this repo.
 
+## Re-scanning past posts
+
+Posts are matched to groups when the watcher scrapes them, so accounts,
+keywords or hashtags added to a group later do not cover older posts. On the
+**🏷️ Groups** page, open a group and use **🔎 Past posts**:
+
+- **Re-scan past posts** — previews how many stored posts the group's current
+  criteria match but that are not in it yet (with the newest 20 and why they
+  match); **Tag N posts** adds them. It only adds: posts already in the group,
+  including ones you added by hand, are untouched, and no Telegram alerts are
+  sent.
+- **Test** — try a candidate keyword, hashtag or account against stored posts
+  before adding it; **+ Add to group** saves it if the results look right.
+
+API: `GET/POST /api/groups/{id}/rescan`, `GET /api/groups/{id}/test`.
+
+## AI assistant (OpenRouter)
+
+Paste an OpenRouter API key (from openrouter.ai/keys) in the **AI assistant**
+section of the **🔑 Sources** page. It is saved to `.env.config` as
+`OPENROUTER_API_KEY` and never shown in the browser again. The model defaults
+to `google/gemini-3.8-flash`; change it there too (`OPENROUTER_MODEL`).
+
+- **🤖 Ask AI** (Explorer, below the filters) — ask questions about the 80 most
+  recent posts matching the current filters (captions, authors, top comments).
+  Tick **Search the web** to let the model use live web results; sources are
+  listed under the answer. Follow-up questions keep the conversation context.
+- **✨ AI** (Groups page, per group) — suggests accounts to follow plus keywords
+  and hashtags to add, and current items to remove, each with a reason.
+  Additions are pre-selected and removals are not; nothing changes until you
+  click **Apply selected**. Suggested accounts are marked *seen in feed* when
+  their posts are already in the database, otherwise *check on Instagram*.
+
+API: `GET/PUT /api/settings/ai`, `POST /api/ai/ask`,
+`POST /api/ai/groups/{id}/suggest` (see `api/openapi.json`). Calls are billed to
+your OpenRouter key; web search adds roughly $0.02–0.04 per request.
+
 ## Feed Watcher Setup
 
 ### 1. Install dependencies

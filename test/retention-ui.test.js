@@ -12,7 +12,7 @@ const repo = resolve(process.env.IG_TEST_ROOT || fileURLToPath(new URL('..', imp
 for (const mode of [undefined, '0', '1', '2', 'invalid']) {
   test(`retention UI with AUTO_RETENTION=${mode ?? 'unset'}`, async () => {
     const root = mkdtempSync(join(tmpdir(), 'ig-retention-ui-'));
-    for (const file of ['server.js', 'sources.js', 'runtime-policy.js', 'retention.js', 'contract-policy.js', 'skill-policy.js', 'package.json']) copyFileSync(join(repo, file), join(root, file));
+    for (const file of ['server.js', 'sources.js', 'runtime-policy.js', 'retention.js', 'contract-policy.js', 'skill-policy.js', 'ai.js', 'group-match.js', 'package.json']) copyFileSync(join(repo, file), join(root, file));
     symlinkSync(join(repo, 'node_modules'), join(root, 'node_modules'), 'junction');
     writeFileSync(join(root, 'groups.json'), JSON.stringify({groups:[{id:'test',name:'Test',color:'#ffffff',accounts:[],keywords:[],hashtags:[]}]}));
     const reservation = createServer();

@@ -17,7 +17,8 @@
     { "name": "sources", "description": "Ingestion sources (accounts) and their cookies" },
     { "name": "settings", "description": "Runtime settings exposed to the web settings pages" },
     { "name": "export", "description": "Bulk JSON export of post metadata" },
-    { "name": "skill", "description": "The self-installable agent skill for this API" }
+    { "name": "skill", "description": "The self-installable agent skill for this API" },
+    { "name": "ai", "description": "OpenRouter-powered questions about stored posts and interest-group suggestions" }
   ],
   "paths": {
     "/api/feeds": {
@@ -121,6 +122,123 @@
           "200": {
             "description": "Export payload.",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Export" } } }
+          }
+        }
+      }
+    },
+    "/api/groups/{id}/rescan": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/groupId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Preview matching past posts",
+        "description": "Groups are matched when a post is scraped. Applies the group's current accounts/keywords/hashtags to all stored posts and reports those that match but are not in the group yet (sample: newest 20). Nothing is changed.",
+        "responses": {
+          "200": {
+            "description": "Preview.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PastMatchSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group not found."
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Tag matching past posts",
+        "description": "Adds the group (with its match reasons) to every stored post its current criteria match that is not in the group yet. Existing group memberships are never removed and no Telegram messages are sent. Requires FULL_AGENT=1.",
+        "responses": {
+          "200": {
+            "description": "Posts tagged.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "tagged": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group not found."
+          },
+          "405": {
+            "description": "API is read-only because FULL_AGENT is not 1."
+          }
+        }
+      }
+    },
+    "/api/groups/{id}/test": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/groupId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Test a candidate criterion on past posts",
+        "description": "Reports which stored posts a single account, keyword or hashtag would match, using the same rules as group matching, and whether each is already in the group. Nothing is saved.",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "account",
+                "keyword",
+                "hashtag"
+              ]
+            }
+          },
+          {
+            "name": "value",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matches.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PastMatchSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid type or missing value."
+          },
+          "404": {
+            "description": "Group not found."
           }
         }
       }
@@ -341,7 +459,7 @@
       "get": {
         "tags": ["settings"],
         "summary": "Get image-retention settings",
-        "description": "Returns AUTO_RETENTION mode, the global IMAGE_RETENTION_DAYS value, and whether per-group overrides are active.",
+        "description": "Returns AUTO_RETENTION mode, the global IMAGE_RETENTION_DAYS value, and whether per-group overrides are active. Images past their retention are shrunk to 10% of each dimension, then deleted at twice the retention period.",
         "responses": {
           "200": {
             "description": "Current image-retention settings.",
@@ -362,6 +480,143 @@
           "400": { "description": "Value is not a positive whole number." },
           "405": { "description": "API is read-only because FULL_AGENT is not 1." },
           "409": { "description": "IMAGE_RETENTION_DAYS is owned by the process environment." }
+        }
+      }
+    },
+    "/api/settings/ai": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get AI (OpenRouter) settings",
+        "description": "Whether an OpenRouter API key is configured and which model is used. The key itself is never returned.",
+        "responses": {
+          "200": {
+            "description": "Current AI settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiSettings"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Set the OpenRouter API key and/or model",
+        "description": "Persists OPENROUTER_API_KEY and/or OPENROUTER_MODEL to .env.config. Blank or omitted fields keep their current value. Requires FULL_AGENT=1.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiSettingsInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved."
+          },
+          "400": {
+            "description": "A value contains whitespace or line breaks."
+          },
+          "405": {
+            "description": "API is read-only because FULL_AGENT is not 1."
+          }
+        }
+      }
+    },
+    "/api/ai/ask": {
+      "post": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Ask a question about stored posts",
+        "description": "Answers from the 80 most recent posts matching the optional filters (same meaning as /api/feeds), including top comments. With web=true, OpenRouter web search is enabled and web sources are returned as citations. Requires FULL_AGENT=1 and an OpenRouter API key.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiAskInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing question or OpenRouter API key not set."
+          },
+          "405": {
+            "description": "API is read-only because FULL_AGENT is not 1."
+          },
+          "502": {
+            "description": "OpenRouter returned an error."
+          }
+        }
+      }
+    },
+    "/api/ai/groups/{id}/suggest": {
+      "post": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Suggest group improvements",
+        "description": "Proposes accounts to follow plus keywords and hashtags to add, and current items to remove, based on the group's recent matched posts (and web search when web=true). Nothing is saved; apply accepted items with PUT /api/groups/{id}. Requires FULL_AGENT=1 and an OpenRouter API key.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/groupId"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiSuggestInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The suggestions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiSuggestions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "OpenRouter API key not set."
+          },
+          "404": {
+            "description": "Group not found."
+          },
+          "405": {
+            "description": "API is read-only because FULL_AGENT is not 1."
+          },
+          "502": {
+            "description": "OpenRouter returned an error or unreadable output."
+          }
         }
       }
     },
@@ -413,7 +668,7 @@
       "source": { "name": "source", "in": "query", "schema": { "type": "string" }, "description": "Filter by source_id." },
       "group": { "name": "group", "in": "query", "schema": { "type": "string" }, "description": "Filter by group id." },
       "author": { "name": "author", "in": "query", "schema": { "type": "string" }, "description": "Fuzzy-match author username." },
-      "search": { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Fuzzy-match caption text." },
+      "search": { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Fuzzy-match caption text. Terms starting with # match that exact hashtag (case- and accent-insensitive)." },
       "reel": { "name": "reel", "in": "query", "schema": { "type": "string", "enum": ["0", "1"] }, "description": "Filter photos (0) or reels (1)." },
       "date_from": { "name": "date_from", "in": "query", "schema": { "type": "string" }, "description": "Posts with timestamp >= this value." },
       "date_to": { "name": "date_to", "in": "query", "schema": { "type": "string" }, "description": "Posts with timestamp <= this value." },
@@ -562,6 +817,7 @@
           "image_urls": { "type": "array", "items": { "type": "string" } },
           "screenshot_path": { "type": ["string", "null"] },
           "screenshot_url": { "type": ["string", "null"], "description": "Relative URL of the screenshot." },
+          "screenshot_downsized": { "type": "integer", "enum": [0, 1], "description": "1 once image retention has shrunk the screenshot to 10% of each dimension." },
           "scraped_at": { "type": ["string", "null"] },
           "seen_at": { "type": ["string", "null"] },
           "matched_groups": { "type": "array", "items": { "$ref": "#/components/schemas/MatchedGroup" } },
@@ -660,6 +916,293 @@
         "properties": {
           "sources": { "type": "array", "items": { "$ref": "#/components/schemas/Source" } },
           "ingesterTypes": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "AiSettings": {
+        "type": "object",
+        "properties": {
+          "keySet": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string"
+          },
+          "defaultModel": {
+            "type": "string"
+          }
+        }
+      },
+      "AiSettingsInput": {
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "example": "google/gemini-3.8-flash"
+          }
+        }
+      },
+      "AiAskInput": {
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "filters": {
+            "type": "object",
+            "description": "Optional post filters: group, source, author, search, reel, date_from, date_to.",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "web": {
+            "type": "boolean",
+            "default": false
+          },
+          "history": {
+            "type": "array",
+            "description": "Previous turns; the last 6 are used.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "assistant"
+                  ]
+                },
+                "content": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "AiAnswer": {
+        "type": "object",
+        "properties": {
+          "answer": {
+            "type": "string"
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "model": {
+            "type": "string"
+          },
+          "post_count": {
+            "type": "integer",
+            "description": "Posts sent to the model."
+          },
+          "total": {
+            "type": "integer",
+            "description": "Posts matching the filters."
+          }
+        }
+      },
+      "AiSuggestInput": {
+        "type": "object",
+        "properties": {
+          "web": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "AiSuggestions": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string"
+          },
+          "add": {
+            "type": "object",
+            "properties": {
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string",
+                      "description": "Instagram username without @"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "seen_in_feed": {
+                      "type": "boolean",
+                      "description": "Whether posts by this account are already in the database (only on add.accounts)."
+                    }
+                  }
+                }
+              },
+              "keywords": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "hashtags": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "remove": {
+            "type": "object",
+            "properties": {
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "keywords": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "hashtags": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "model": {
+            "type": "string"
+          },
+          "post_count": {
+            "type": "integer"
+          }
+        }
+      },
+      "PastMatchSummary": {
+        "type": "object",
+        "properties": {
+          "matched": {
+            "type": "integer",
+            "description": "Stored posts the criteria match."
+          },
+          "already_in_group": {
+            "type": "integer"
+          },
+          "new_matches": {
+            "type": "integer",
+            "description": "Matching posts not in the group yet."
+          },
+          "sample": {
+            "type": "array",
+            "description": "Newest 20 (rescan: new matches only).",
+            "items": {
+              "type": "object",
+              "properties": {
+                "shortcode": {
+                  "type": "string"
+                },
+                "permalink": {
+                  "type": "string"
+                },
+                "author": {
+                  "type": "string"
+                },
+                "caption": {
+                  "type": "string",
+                  "description": "First 200 characters."
+                },
+                "timestamp": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "reasons": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "in_group": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
         }
       }
     }
